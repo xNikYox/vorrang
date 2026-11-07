@@ -36,9 +36,8 @@ test("QoS-Skript: alte Vorrang-Richtlinien weg, neue mit Mindestrate", () => {
 test("PowerShell-Protokoll: Antworten werden der richtigen Anfrage zugeordnet", async () => {
   // Attrappe statt powershell.exe: antwortet auf jede Zeile mit Markierung und JSON
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vorrang-ps-"));
-  const fake = path.join(dir, "fake-ps");
-  fs.writeFileSync(fake, `#!/usr/bin/env node
-let buf = "";
+  const fake = path.join(dir, "fake-ps.js");
+  fs.writeFileSync(fake, `let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
   let i;
@@ -51,8 +50,7 @@ process.stdin.on("data", (d) => {
     process.stdout.write("@@" + m[1] + "@@" + JSON.stringify({ n: Number(m[1]), echo: line.includes("Get-Process") }) + "\\r\\n");
   }
 });`);
-  fs.chmodSync(fake, 0o755);
-  const ps = new W.PowerShell({ exe: fake, timeout: 1500 });
+  const ps = new W.PowerShell({ exe: process.execPath, args: [fake], timeout: 1500 });
   const [a, b] = await Promise.all([ps.run(W.LIST_CMD), ps.run("'x'")]);
   assert.deepEqual(a, { n: 1, echo: true });
   assert.deepEqual(b, { n: 2, echo: false });

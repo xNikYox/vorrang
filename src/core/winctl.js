@@ -61,8 +61,9 @@ function qosScript(policies, resultFile) {
 
 /** Dauerhafte PowerShell: Anfragen nacheinander, Antwort an einer Markierung erkennbar */
 class PowerShell {
-  constructor({ exe = "powershell.exe", timeout = 20000 } = {}) {
+  constructor({ exe = "powershell.exe", args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"], timeout = 20000 } = {}) {
     this.exe = exe;
+    this.args = args;
     this.timeout = timeout;
     this.queue = Promise.resolve();
     this.seq = 0;
@@ -70,7 +71,7 @@ class PowerShell {
   }
 
   start() {
-    const child = spawn(this.exe, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(this.exe, this.args, { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
     child.stdout.setEncoding("utf8");
     child.buf = "";
     child.waiting = null;
