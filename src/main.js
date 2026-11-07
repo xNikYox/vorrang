@@ -266,6 +266,7 @@ function info() {
     update,
     qosPending: JSON.stringify(qosPolicies(settings.data.rules)) !== JSON.stringify(settings.data.qosApplied),
     servicesReady: engine.servicesReady,
+    ramReady: engine.ramReady,
     gameRoots: engine.roots.length,
     measure: measureResult,
   };
@@ -281,7 +282,7 @@ ipcMain.handle("rules:save", async (_e, rules) => {
 
 ipcMain.handle("settings:save", async (_e, patch) => {
   const allowed = ["manual", "autoGameMode", "alwaysThrottle", "backgroundCores", "powerPlan", "autostart", "startHidden", "closeToTray", "notify", "interval", "showAll",
-    "autoGames", "trimRam", "pauseOneDrive", "overlay", "overlayPos", "overlayAlways", "hotkeyToggle", "hotkeyOverlay"];
+    "autoGames", "trimRam", "pauseOneDrive", "overlay", "overlayPos", "overlayAlways", "hotkeyToggle", "hotkeyOverlay", "autoTrim", "memPriority", "ramWarn"];
   const p = Object.fromEntries(Object.entries(patch || {}).filter(([k]) => allowed.includes(k)));
   const wasPower = settings.data.powerPlan;
   settings.update(p);
@@ -304,16 +305,48 @@ ipcMain.handle("settings:save", async (_e, patch) => {
   return { ...info(), hotkeyError };
 });
 
-/** Dienste-Pause an/aus: richtet die geschützte Aufgabe ein bzw. entfernt sie (einmal Admin) */
-ipcMain.handle("services:set", async (_e, on) => {
+/**
+ * Admin-Helfer (geschützte Aufgaben für Dienste-Pause und Standby-Liste): einrichten, wenn eine der beiden Funktionen
+ * angeht und er noch fehlt; entfernen, wenn beide aus sind. Windows fragt dabei einmal nach Admin-Rechten.
+ */
+async function helper(feature, on) {
   if (!IS_WIN) return { result: "Nur unter Windows möglich.", info: info() };
-  if (!on && engine.servicesPaused) await engine.unboost();
-  const result = await engine.win.setupServices(!on);
-  if (result === "ok") {
-    engine.servicesReady = !!on;
-    settings.update({ pauseServices: !!on });
-  } else engine.servicesReady = await engine.win.servicesReady().catch(() => false);
+  const other = feature === "pauseServices" ? "standbyPurge" : "pauseServices";
+  if (!on && feature === "pauseServices" && engine.servicesPaused) {
+    engine.servicesPaused = false;
+    await engine.win.services(false).catch(() => {});
+  }
+  if (!on && feature === "standbyPurge" && engine.ramWatching) {
+    engine.ramWatching = false;
+    await engine.win.ramWatch(false).catch(() => {});
+  }
+  let result = "ok";
+  const complete = engine.servicesReady && engine.ramReady;
+  if (on && !complete) result = await engine.win.setupServices(false);
+  else if (!on && !settings.data[other]) result = await engine.win.setupServices(true);
+  if (result === "ok") settings.update({ [feature]: !!on });
+  engine.servicesReady = await engine.win.servicesReady().catch(() => false);
+  engine.ramReady = await engine.win.ramReady().catch(() => false);
+  // Spielmodus läuft schon: gleich anwenden
+  if (on && result === "ok" && engine.active) await engine.boost(true, [], new Map()).catch(() => {});
   return { result, info: info() };
+}
+
+ipcMain.handle("services:set", (_e, on) => helper("pauseServices", on));
+ipcMain.handle("standby:set", (_e, on) => helper("standbyPurge", on));
+
+ipcMain.handle("ram:purge", async () => {
+  if (!IS_WIN) return { result: "Nur unter Windows möglich." };
+  if (!engine.ramReady) return { result: "Erst „Standby-Liste leeren“ in den Einstellungen einschalten (einmal Admin-Rechte)." };
+  const before = engine.win.ramStatus()?.at || 0;
+  await engine.win.ramPurgeNow();
+  // Ergebnis abwarten (die Aufgabe schreibt den Stand in eine Datei)
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    const st = engine.win.ramStatus();
+    if (st && st.at > before) return { result: "ok", status: st };
+  }
+  return { result: "Keine Antwort von der Aufgabe." };
 });
 
 ipcMain.handle("measure", async () => {
@@ -373,6 +406,15 @@ app.whenReady().then(() => {
       send("state", snap);
       updateOverlay(snap);
     },
+    onRamWarning: (used, top) => {
+      if (!Notification.isSupported()) return;
+      const gb = (b) => (b / 1024 ** 3).toFixed(1).replace(".", ",") + " GB";
+      new Notification({
+        title: `RAM fast voll (${Math.round(used)} %)`,
+        body: top.length ? "Schließen würde helfen: " + top.map((t) => `${t.name} (${gb(t.ram)})`).join(", ") : "Schließe Programme, die du gerade nicht brauchst.",
+        icon: asset("icon.png"),
+      }).show();
+    },
     onGameMode: (active, game, extra = {}) => {
       updateTray();
       if (settings.data.notify && Notification.isSupported()) {
@@ -380,6 +422,7 @@ app.whenReady().then(() => {
         if (extra.freed > 50e6) more.push(`${Math.round(extra.freed / 1e6)} MB RAM freigeräumt`);
         if (extra.services) more.push("Windows Update & Suche pausiert");
         if (extra.oneDrive) more.push("OneDrive pausiert");
+        if (extra.standby) more.push("Standby-Wächter an");
         new Notification({
           title: active ? "Spielmodus an" : "Spielmodus aus",
           body: active ? `${game || "Spiel"} hat jetzt Vorrang.` + (more.length ? " " + more.join(" · ") + "." : "") : "Alle Programme laufen wieder normal.",
@@ -414,6 +457,7 @@ app.whenReady().then(() => {
       // Nach einem Absturz im Spielmodus: pausierte Dienste wieder starten
       if (ready) engine.win.services(false).catch(() => {});
     }).catch(() => {});
+    engine.win.ramReady().then((ready) => (engine.ramReady = ready)).catch(() => {});
   }
 });
 
@@ -453,6 +497,10 @@ function fakeWin() {
     servicesReady: async () => false,
     services: async () => {},
     steamPath: async () => null,
+    ramReady: async () => false,
+    ramWatch: async () => {},
+    ramPurgeNow: async () => {},
+    ramStatus: () => null,
     stop() {},
   };
 }

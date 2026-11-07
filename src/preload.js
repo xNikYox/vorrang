@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("vorrang", {
   saveSettings: (patch) => ipcRenderer.invoke("settings:save", patch),
   applyQos: () => ipcRenderer.invoke("qos:apply"),
   setServices: (on) => ipcRenderer.invoke("services:set", on),
+  setStandby: (on) => ipcRenderer.invoke("standby:set", on),
+  purgeNow: () => ipcRenderer.invoke("ram:purge"),
   measure: () => ipcRenderer.invoke("measure"),
   icons: (paths) => ipcRenderer.invoke("icons", paths),
   checkUpdate: () => ipcRenderer.invoke("update:check"),

@@ -40,7 +40,8 @@ test("Plan nur im Spielmodus; alwaysThrottle drosselt auch ohne Spiel (Spiel abe
   const s = { backgroundCores: 2 };
   const on = R.plan(procs, a, s, 8, true);
   assert.deepEqual(on.get(10), { priority: "High", affinity: "255", rule: "minecraft" });
-  assert.deepEqual(on.get(12), { priority: "BelowNormal", affinity: String(0xc0), rule: "firefox" });
+  assert.deepEqual(on.get(12), { priority: "BelowNormal", affinity: String(0xc0), rule: "firefox", memPriority: 2 });
+  assert.equal(R.plan(procs, a, { ...s, memPriority: false }, 8, true).get(12).memPriority, undefined);
   assert.equal(R.plan(procs, a, s, 8, false).size, 0);
   const always = R.plan(procs, a, { ...s, alwaysThrottle: true }, 8, false);
   assert.equal(always.has(10), false);
@@ -48,7 +49,7 @@ test("Plan nur im Spielmodus; alwaysThrottle drosselt auch ohne Spiel (Spiel abe
 });
 
 test("Feinheiten überschreiben die Stufe; null = nicht ändern; Echtzeit geht nie", () => {
-  assert.deepEqual(R.effective({ level: "low", priority: "Idle", cores: null }), { priority: "Idle", cores: null, gpu: null, uploadMbit: null });
+  assert.deepEqual(R.effective({ level: "low", priority: "Idle", cores: null }), { priority: "Idle", cores: null, gpu: null, uploadMbit: null, memPriority: 2 });
   assert.equal(R.effective({ level: "game", priority: "RealTime" }).priority, null);
   assert.equal(R.effective({ level: "minimal", uploadMbit: 2.5 }).uploadMbit, 2.5);
 });
@@ -98,4 +99,20 @@ test("CPU-Auslastung in Prozent der Gesamtleistung", () => {
   assert.equal(u.get(1), 50);
   assert.equal(u.has(2), false);
   assert.equal(u.has(3), false);
+});
+
+test("Speicher-Priorität: setzen, merken, beim Zurücksetzen den Ursprung wiederherstellen", () => {
+  const state = new Map();
+  const procs = [{ pid: 12, name: "firefox" }];
+  let acts = R.diff(procs, new Map([[12, { priority: "Idle", affinity: null, memPriority: 1 }]]), state);
+  assert.deepEqual(acts, [{ pid: 12, priority: "Idle", memPriority: 1 }]);
+  R.record(state, acts[0], { pid: 12, priority: "Normal", affinity: "255", memPriority: 5 });
+  assert.deepEqual(R.diff(procs, new Map([[12, { priority: "Idle", affinity: null, memPriority: 1 }]]), state), []);
+  acts = R.diff(procs, new Map(), state);
+  assert.deepEqual(acts, [{ pid: 12, restore: true, priority: "Normal", affinity: "255", memPriority: 5 }]);
+  // Speicher-Priorität ging nicht (z. B. kein Zugriff) → nicht als gesetzt merken, nichts zurückzusetzen
+  const s2 = new Map();
+  R.record(s2, { pid: 13, priority: "Idle", memPriority: 1 }, { pid: 13, priority: "Normal", affinity: "255", memPriority: null, memPriorityOk: false });
+  assert.deepEqual(R.diff([{ pid: 13 }], new Map([[13, { priority: "Idle", affinity: null, memPriority: 1 }]]), s2), [], "nicht jede Runde neu versuchen");
+  assert.deepEqual(R.diff([{ pid: 13 }], new Map(), s2), [{ pid: 13, restore: true, priority: "Normal", affinity: "255" }]);
 });

@@ -5,8 +5,8 @@
 const LEVELS = {
   game: { label: "Vorrang", priority: "High", cores: "all", gpu: "high" },
   normal: { label: "Normal", priority: null, cores: null, gpu: null },
-  low: { label: "Gedrosselt", priority: "BelowNormal", cores: "background", gpu: null },
-  minimal: { label: "Minimal", priority: "Idle", cores: "background", gpu: "saving" },
+  low: { label: "Gedrosselt", priority: "BelowNormal", cores: "background", gpu: null, memPriority: 2 },
+  minimal: { label: "Minimal", priority: "Idle", cores: "background", gpu: "saving", memPriority: 1 },
 };
 
 /** Erlaubte Prioritäten (Echtzeit absichtlich nicht: kann Windows einfrieren) */
@@ -54,6 +54,7 @@ function effective(rule) {
     cores: pick("cores") ?? null, // "all" | "background" | "game" | [Kernnummern] | null
     gpu: pick("gpu") ?? null, // "high" | "saving" | "auto" | null
     uploadMbit: Number(rule.uploadMbit) > 0 ? Number(rule.uploadMbit) : null,
+    memPriority: base.memPriority || null, // Speicher-Priorität 1 (sehr niedrig) … 5 (normal); Windows lagert Niedrige zuerst aus
   };
 }
 
@@ -134,8 +135,11 @@ function plan(procs, assigned, settings, cpuCount, active) {
     if (!active && !(settings.alwaysThrottle && !isGame)) continue;
     const e = effective(rule);
     const affinity = e.cores ? coreMask(e.cores, cpuCount, settings.backgroundCores) : null;
-    if (!e.priority && affinity == null) continue;
-    desired.set(p.pid, { priority: e.priority, affinity: affinity == null ? null : affinity.toString(), rule: rule.id });
+    const mem = settings.memPriority !== false ? e.memPriority : null;
+    if (!e.priority && affinity == null && !mem) continue;
+    const want = { priority: e.priority, affinity: affinity == null ? null : affinity.toString(), rule: rule.id };
+    if (mem) want.memPriority = mem;
+    desired.set(p.pid, want);
   }
   return desired;
 }
@@ -153,11 +157,14 @@ function diff(procs, desired, state) {
     const a = { pid };
     if (want.priority && want.priority !== cur.priority) a.priority = want.priority;
     if (want.affinity != null && want.affinity !== cur.affinity) a.affinity = want.affinity;
-    if (a.priority || a.affinity != null) actions.push(a);
+    if (want.memPriority && want.memPriority !== cur.memPriority) a.memPriority = want.memPriority;
+    if (a.priority || a.affinity != null || a.memPriority) actions.push(a);
   }
   for (const [pid, s] of state) {
     if (desired.has(pid) || !s.orig) continue;
-    actions.push({ pid, restore: true, priority: s.orig.priority, affinity: s.orig.affinity });
+    const a = { pid, restore: true, priority: s.orig.priority, affinity: s.orig.affinity };
+    if (s.applied.memPriority && s.orig.memPriority && !s.memFailed) a.memPriority = s.orig.memPriority;
+    actions.push(a);
   }
   return actions;
 }
@@ -169,9 +176,13 @@ function record(state, action, result) {
     state.delete(action.pid);
     return;
   }
-  const s = state.get(action.pid) || { orig: { priority: result.priority, affinity: result.affinity }, applied: {} };
+  const s = state.get(action.pid) || { orig: { priority: result.priority, affinity: result.affinity, memPriority: result.memPriority ?? null }, applied: {} };
   if (action.priority) s.applied.priority = action.priority;
   if (action.affinity != null) s.applied.affinity = action.affinity;
+  if (action.memPriority) {
+    s.applied.memPriority = action.memPriority; // auch bei Fehler merken: nicht jede Runde neu versuchen
+    if (result.memPriorityOk === false) s.memFailed = true;
+  }
   state.set(action.pid, s);
 }
 

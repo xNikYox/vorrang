@@ -43,6 +43,14 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     assert.equal(BigInt.asUintN(64, BigInt(now.aff)).toString(), before.affinity);
     console.log("Priorität + Kerne setzen und zurücksetzen: ok");
 
+    // Speicher-Priorität: setzen, auslesen (über den Vorher-Wert der nächsten Änderung), zurücksetzen
+    const [m1] = await win.apply([{ pid: child.pid, memPriority: 2 }]);
+    assert.equal(m1.memPriorityOk, true, "Speicher-Priorität setzen: " + JSON.stringify(m1));
+    assert.equal(m1.memPriority, 5, "Standard ist 5 (normal)");
+    const [m2] = await win.apply([{ pid: child.pid, memPriority: 5 }]);
+    assert.equal(m2.memPriority, 2, "Speicher-Priorität wurde nicht übernommen");
+    console.log("Speicher-Priorität setzen und zurücksetzen: ok");
+
     const [err] = await win.apply([{ pid: 999999, priority: "High" }]);
     assert.ok(err.error, "Fehler bei unbekanntem Prozess erwartet");
 
@@ -114,6 +122,46 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     } catch (e) {
       console.log("schtasks /run (ohne angemeldeten Benutzer evtl. nicht möglich):", e.message);
     }
+    // RAM: Standby-Liste einmal leeren, dann Wächter (braucht einen laufenden „Vorrang“-Prozess)
+    assert.equal(await win.ramReady(), true);
+    const ram = dir + "\\ram.ps1";
+    execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ram, "now"]);
+    let st = win.ramStatus();
+    console.log("Standby leeren:", JSON.stringify(st));
+    assert.equal(st.priv, true, "Recht zum Leeren fehlt");
+    assert.equal(st.purges, 1, "Leeren fehlgeschlagen");
+    assert.ok(st.free > 0 && st.standby >= 0);
+    const fakeApp = require("node:path").join(require("node:os").tmpdir(), "Vorrang.exe");
+    fs.copyFileSync(process.execPath, fakeApp);
+    const app = spawn(fakeApp, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });
+    await wait(1500);
+    const watcher = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ram, "start"], { stdio: "ignore", windowsHide: true });
+    let running = false;
+    for (let i = 0; i < 20 && !running; i++) {
+      await wait(1000);
+      st = win.ramStatus();
+      running = !!st?.running;
+    }
+    assert.ok(running, "Wächter läuft nicht: " + JSON.stringify(st));
+    console.log("Wächter läuft:", JSON.stringify(st));
+    execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ram, "stop"]);
+    const ended = await new Promise((res) => {
+      const t = setTimeout(() => res(false), 15000);
+      watcher.once("exit", () => (clearTimeout(t), res(true)));
+    });
+    assert.ok(ended, "Wächter endet nicht nach stop");
+    assert.equal(win.ramStatus().running, false);
+    app.kill();
+    try {
+      await win.ramWatch(true);
+      await wait(3000);
+      await win.ramWatch(false);
+      console.log("RAM-Aufgaben per schtasks gestartet");
+    } catch (e) {
+      console.log("schtasks /run RAM (ohne angemeldeten Benutzer evtl. nicht möglich):", e.message);
+    }
+    console.log("RAM: Standby leeren und Wächter: ok");
+
     assert.equal(await win.setupServices(true), "ok");
     assert.equal(await win.servicesReady(), false);
     assert.ok(!fs.existsSync(dir), "Ordner nicht entfernt");

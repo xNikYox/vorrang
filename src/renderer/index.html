@@ -14,6 +14,7 @@
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="programme" role="tab">Programme</button>
+      <button class="tab" data-tab="ram" role="tab">RAM</button>
       <button class="tab" data-tab="regeln" role="tab">Regeln</button>
       <button class="tab" data-tab="einstellungen" role="tab">Einstellungen</button>
     </nav>
@@ -64,6 +65,36 @@
       <p class="empty" id="programsEmpty" hidden>Keine passenden Programme.</p>
     </section>
 
+    <section class="page" id="page-ram">
+      <div class="ram-grid">
+        <div class="card ram-main">
+          <h2>Arbeitsspeicher</h2>
+          <div class="ram-big"><b id="ramUsed">–</b><span id="ramOf"></span></div>
+          <div class="ram-bar"><i id="ramBar"></i></div>
+          <div class="ram-facts">
+            <div><small>Frei</small><b id="ramFree">–</b></div>
+            <div><small>Standby-Liste</small><b id="ramStandby">–</b></div>
+            <div><small>Nachgeräumt</small><b id="ramTrims">–</b></div>
+            <div><small>Standby geleert</small><b id="ramPurges">–</b></div>
+          </div>
+          <div class="ram-actions">
+            <button class="btn" id="purgeBtn" title="Leert den Windows-Datei-Cache im RAM (Standby-Liste)">Standby-Liste jetzt leeren</button>
+            <span class="hint" id="ramHint"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>RAM-Optimierung</h2>
+          <label class="row"><span>Speicher-Priorität senken<small>Windows lagert zuerst Daten der Gedrosselten aus, nicht die vom Spiel</small></span><input type="checkbox" class="switch" data-set="memPriority"></label>
+          <label class="row"><span>RAM freiräumen beim Spielstart<small>Gedrosselte geben ungenutzten Arbeitsspeicher zurück</small></span><input type="checkbox" class="switch" data-set="trimRam"></label>
+          <label class="row"><span>Automatisch nachräumen<small>Im Spiel über 85 % RAM: höchstens einmal pro Minute erneut</small></span><input type="checkbox" class="switch" data-set="autoTrim"></label>
+          <label class="row"><span>Standby-Liste leeren<small>Wie ISLC: im Spiel bei unter 1 GB freiem RAM – einmal Admin-Rechte</small></span><input type="checkbox" class="switch" id="standbySwitch"></label>
+          <label class="row"><span>Warnung bei knappem RAM<small>Über 90 % im Spiel: Hinweis, was sich schließen lässt</small></span><input type="checkbox" class="switch" data-set="ramWarn"></label>
+        </div>
+      </div>
+      <h3 class="section">Größte RAM-Fresser</h3>
+      <div class="list" id="ramTop"></div>
+    </section>
+
     <section class="page" id="page-regeln">
       <div class="banner" id="qosBanner" hidden>
         <div><b>Upload-Limits geändert.</b> Windows fragt einmal nach Admin-Rechten, um sie zu übernehmen.</div>
@@ -95,7 +126,6 @@
         <div class="card">
           <h2>Spiel-Boost</h2>
           <label class="row"><span>Spiele automatisch erkennen<small id="rootsText">Steam, Epic, Battle.net, Riot, Xbox, EA, Ubisoft, GOG</small></span><input type="checkbox" class="switch" data-set="autoGames"></label>
-          <label class="row"><span>RAM freiräumen beim Spielstart<small>Gedrosselte geben ungenutzten Arbeitsspeicher an Windows zurück</small></span><input type="checkbox" class="switch" data-set="trimRam"></label>
           <label class="row"><span>Windows-Dienste pausieren<small>Windows Update, Übermittlungsoptimierung, Suche – einmal Admin-Rechte</small></span><input type="checkbox" class="switch" id="servicesSwitch"></label>
           <label class="row"><span>OneDrive pausieren<small>Wird nach dem Spiel wieder gestartet</small></span><input type="checkbox" class="switch" data-set="pauseOneDrive"></label>
         </div>

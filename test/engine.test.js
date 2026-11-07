@@ -30,6 +30,9 @@ function fakeWin(procs) {
     startOneDrive: (p) => w.oneDrive.push(["start", p]),
     connections: async () => w.conns,
     ping: async (host) => (w.pings.push(host), w.pingMs ?? null),
+    ramCalls: [],
+    ramWatch: async (on) => w.ramCalls.push(on),
+    ramStatus: () => w.ramStat || null,
   };
   return w;
 }
@@ -106,7 +109,7 @@ test("Spielstart-Boost: RAM der Gedrosselten, Dienste und OneDrive pausieren –
   assert.deepEqual(win.servicesCalls, [true]);
   assert.deepEqual(win.oneDrive, [["stop", "C:\\P\\OneDrive.exe"]]);
   assert.deepEqual(events[0], [true, "Minecraft", { freed: 200e6, services: true, oneDrive: true }]);
-  assert.deepEqual(snap.boost, { services: true, oneDrive: true });
+  assert.deepEqual(snap.boost, { services: true, oneDrive: true, standby: false });
   win.procs.splice(win.procs.findIndex((p) => p.pid === 10), 1);
   await e.tick();
   assert.deepEqual(win.servicesCalls, [true, false]);
@@ -184,4 +187,61 @@ test("Vorher/Nachher-Messung: erst ohne, dann mit Vorrang, danach wieder normal"
   await e.tick();
   assert.equal(win.os.get(12).priority, "BelowNormal");
   await assert.rejects(new Engine({ win: fakeWin([]), settings: settingsObj(), cpuCount: 8 }).measure(), /Starte zuerst ein Spiel/);
+});
+
+test("RAM: Wächter (Standby-Liste) läuft nur im Spielmodus, nachräumen bei knappem RAM, Warnung mit RAM-Fressern", async () => {
+  const win = fakeWin([{ pid: 12, name: "firefox", ram: 3e9 }, { pid: 13, name: "chrome", ram: 1e9 }, { pid: 31, name: "discord", ram: 5e8 }]);
+  let ram = 50;
+  const warnings = [];
+  let now = 1_000_000;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const e = new Engine({ win, settings: settingsObj({ standbyPurge: true }), cpuCount: 8, sys: { cpu: () => 10, mem: () => ({ used: ram, total: 100 }) }, onRamWarning: (u, top) => warnings.push([u, top.map((t) => t.name)]) });
+    e.ramReady = true;
+    await e.tick();
+    assert.deepEqual(win.ramCalls, []); // ohne Spiel kein Wächter
+    win.procs.push({ pid: 10, name: "javaw", title: "Minecraft", ram: 4e9 });
+    win.os.set(10, { priority: "Normal", affinity: "255" });
+    await e.tick();
+    assert.deepEqual(win.ramCalls, [true]);
+    assert.equal(win.trimmed.length, 1); // beim Start
+    ram = 88;
+    now += 5000;
+    await e.tick();
+    assert.equal(win.trimmed.length, 2, "über 85 % nachräumen");
+    now += 5000;
+    await e.tick();
+    assert.equal(win.trimmed.length, 2, "höchstens einmal pro Minute");
+    ram = 93;
+    now += 61000;
+    await e.tick(); // nachräumen + erst „hoch seit“
+    assert.equal(win.trimmed.length, 3);
+    assert.deepEqual(warnings, []);
+    now += 7000;
+    const snap = await e.tick();
+    assert.deepEqual(warnings, [[93, ["Firefox", "Google Chrome", "Discord"]]]); // ohne das Spiel
+    now += 7000;
+    await e.tick();
+    assert.equal(warnings.length, 1, "nicht ständig warnen");
+    assert.equal(snap.ram.top[0].name, "Minecraft");
+    assert.equal(snap.ram.top[1].level, "low");
+    assert.equal(snap.ram.trims, 2);
+    win.procs.splice(win.procs.findIndex((p) => p.pid === 10), 1);
+    await e.tick();
+    assert.deepEqual(win.ramCalls, [true, false]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("RAM-Wächter startet nicht ohne Einrichtung oder wenn ausgeschaltet", async () => {
+  const win = fakeWin([{ pid: 10, name: "javaw", title: "Minecraft" }]);
+  const e = new Engine({ win, settings: settingsObj({ standbyPurge: true }), cpuCount: 8 });
+  await e.tick();
+  assert.deepEqual(win.ramCalls, []);
+  const e2 = new Engine({ win: fakeWin([{ pid: 10, name: "javaw", title: "Minecraft" }]), settings: settingsObj({ standbyPurge: false }), cpuCount: 8 });
+  e2.ramReady = true;
+  await e2.tick();
+  assert.deepEqual(e2.win.ramCalls, []);
 });

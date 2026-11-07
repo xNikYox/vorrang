@@ -232,3 +232,30 @@ details.fine .grid2 { margin-top: 10px; }
   .prog { grid-template-columns: 34px minmax(120px, 1fr) 110px auto; }
   .prog .ram { display: none; }
 }
+
+/* RAM */
+.ram-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.ram-big { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.ram-big b { font-size: 30px; font-weight: 750; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.ram-big span { color: var(--muted); }
+.ram-bar { height: 10px; border-radius: 6px; background: var(--bg); overflow: hidden; margin: 10px 0 14px; border: 1px solid var(--line); }
+.ram-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--game), var(--blue)); transition: width .4s, background .3s; }
+.ram-bar i.mid { background: linear-gradient(90deg, #ffd166, var(--bg-core)); }
+.ram-bar i.bad { background: linear-gradient(90deg, var(--bg-core), var(--danger)); }
+.ram-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.ram-facts b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ram-actions { display: flex; align-items: center; gap: 12px; margin: 14px 0 8px; flex-wrap: wrap; }
+.section { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 20px 0 10px; font-weight: 650; }
+.ramrow { display: grid; grid-template-columns: 34px minmax(140px, 1fr) minmax(120px, 2fr) 80px 110px; gap: 14px; align-items: center; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.ramrow .rbar { height: 6px; border-radius: 4px; background: var(--bg); overflow: hidden; }
+.ramrow .rbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--min), var(--blue)); }
+.ramrow .rv { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.lvl { justify-self: end; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--panel2); color: var(--muted); }
+.lvl.game { background: var(--game-dim); color: var(--game); }
+.lvl.low { background: var(--bg-dim); color: var(--bg-core); }
+.lvl.minimal { background: rgba(165, 139, 255, .14); color: var(--min); }
+@media (max-width: 980px) {
+  .ram-grid { grid-template-columns: 1fr; }
+  .ramrow { grid-template-columns: 34px minmax(120px, 1fr) 70px 100px; }
+  .ramrow .rbar { display: none; }
+}

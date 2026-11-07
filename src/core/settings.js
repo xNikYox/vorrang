@@ -21,6 +21,10 @@ function defaults(cpuCount) {
     presets: 2, // Stand der Vorgaben (2 = Discord/Spotify ergänzt)
     autoGames: true, // Spiele aus Steam/Epic/… automatisch erkennen
     trimRam: true, // beim Spielstart RAM der Gedrosselten freiräumen
+    autoTrim: true, // im Spiel erneut freiräumen, wenn der RAM knapp wird
+    memPriority: true, // Gedrosselte: niedrige Speicher-Priorität
+    standbyPurge: false, // Standby-Liste leeren wie ISLC (einmal Admin)
+    ramWarn: true, // Hinweis bei knappem RAM im Spiel
     pauseServices: false, // Windows Update, Übermittlungsoptimierung, Suche pausieren (einmal Admin)
     pauseOneDrive: false,
     overlay: false,
@@ -65,7 +69,7 @@ function clean(raw, cpuCount) {
   const seen = new Set();
   s.rules = (Array.isArray(s.rules) ? s.rules : d.rules).map(cleanRule).filter((r) => r && !seen.has(r.id) && seen.add(r.id));
   if (!["auto", "on", "off"].includes(s.manual)) s.manual = "auto";
-  for (const k of ["autoGameMode", "alwaysThrottle", "powerPlan", "autostart", "startHidden", "closeToTray", "notify", "showAll", "autoGames", "trimRam", "pauseServices", "pauseOneDrive", "overlay", "overlayAlways"]) s[k] = !!s[k];
+  for (const k of ["autoGameMode", "alwaysThrottle", "powerPlan", "autostart", "startHidden", "closeToTray", "notify", "showAll", "autoGames", "trimRam", "pauseServices", "pauseOneDrive", "overlay", "overlayAlways", "autoTrim", "memPriority", "standbyPurge", "ramWarn"]) s[k] = !!s[k];
   if (!OVERLAY_POS.includes(s.overlayPos)) s.overlayPos = d.overlayPos;
   for (const k of ["hotkeyToggle", "hotkeyOverlay"]) s[k] = typeof s[k] === "string" && /^[\w+]{0,60}$/.test(s[k]) ? s[k] : d[k];
   s.backgroundCores = Math.max(1, Math.min(Math.max(1, cpuCount - 1), Number(s.backgroundCores) | 0 || d.backgroundCores));

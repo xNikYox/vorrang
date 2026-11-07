@@ -8,7 +8,8 @@ const net = require("node:net");
 const HISTORY = 120; // Messpunkte im Verlauf
 
 class Engine {
-  constructor({ win, settings, cpuCount, onState = () => {}, onGameMode = () => {}, sys = null, tcpPing = null }) {
+  constructor({ win, settings, cpuCount, onState = () => {}, onGameMode = () => {}, onRamWarning = () => {}, sys = null, tcpPing = null }) {
+    this.onRamWarning = onRamWarning;
     this.win = win;
     this.settings = settings; // Settings-Objekt (data, update)
     this.cpuCount = cpuCount;
@@ -38,6 +39,9 @@ class Engine {
     this.sample = null;
     this.history = [];
     this.net = { target: null, targetAt: 0, ping: null, fails: 0, at: 0 };
+    this.ramReady = false;
+    this.ramWatching = false;
+    this.ram = { trims: 0, freed: 0, lastTrim: 0, highSince: 0, warnedAt: 0 };
   }
 
   /** Regel-Zuordnung inkl. automatisch erkannter Spiele */
@@ -91,6 +95,7 @@ class Engine {
       await this.describe(procs).catch(() => {});
 
       this.metrics(usage);
+      if (!this.measuring) await this.ramCare(procs, assigned).catch(() => {});
       this.last = this.snapshot(procs, assigned, usage);
       this.onState(this.last);
       return this.last;
@@ -114,6 +119,9 @@ class Engine {
       if (s.pauseServices && this.servicesReady && !this.servicesPaused) {
         await this.win.services(true).then(() => (this.servicesPaused = out.services = true)).catch(() => {});
       }
+      if (s.standbyPurge && this.ramReady && !this.ramWatching) {
+        await this.win.ramWatch(true).then(() => (this.ramWatching = out.standby = true)).catch(() => {});
+      }
       if (s.pauseOneDrive && !this.oneDrivePath) {
         const od = procs.find((p) => String(p.name).toLowerCase() === "onedrive" && p.path);
         if (od) {
@@ -126,8 +134,43 @@ class Engine {
     return out;
   }
 
+  /**
+   * Im Spielmodus: wird der RAM knapp (über 85 %), die Gedrosselten erneut freiräumen (höchstens einmal pro Minute);
+   * über 90 % für mehr als 6 s → Hinweis mit den größten RAM-Fressern (höchstens alle 10 Minuten).
+   */
+  async ramCare(procs, assigned) {
+    const s = this.settings.data;
+    const used = this.current?.ram;
+    if (!this.active || used == null) {
+      this.ram.highSince = 0;
+      return;
+    }
+    const now = Date.now();
+    if (s.autoTrim && used >= 85 && now - this.ram.lastTrim >= 60000) {
+      this.ram.lastTrim = now;
+      const pids = [...assigned].filter(([, r]) => r.level === "low" || r.level === "minimal").map(([pid]) => pid);
+      if (pids.length) {
+        const r = await this.win.trim(pids).catch(() => ({ freed: 0 }));
+        this.ram.trims++;
+        this.ram.freed += r.freed || 0;
+      }
+    }
+    if (used >= 90) {
+      if (!this.ram.highSince) this.ram.highSince = now;
+      if (s.ramWarn && now - this.ram.highSince >= 6000 && now - this.ram.warnedAt >= 600000) {
+        this.ram.warnedAt = now;
+        const gamePids = new Set(this.gamePids);
+        this.onRamWarning(used, topRam(procs.filter((p) => !gamePids.has(p.pid)), this, 3));
+      }
+    } else this.ram.highSince = 0;
+  }
+
   /** Dienste und OneDrive wieder starten */
   async unboost() {
+    if (this.ramWatching) {
+      this.ramWatching = false;
+      await this.win.ramWatch(false).catch(() => {});
+    }
     if (this.servicesPaused) {
       this.servicesPaused = false;
       await this.win.services(false).catch(() => {});
@@ -323,9 +366,39 @@ class Engine {
     return {
       at: Date.now(), active: this.active, game: this.game, cpuCount: this.cpuCount, programs, total: groups.size,
       measuring: this.measuring, metrics: this.current || null, history: this.history.slice(-60),
-      boost: { services: this.servicesPaused, oneDrive: !!this.oneDrivePath },
+      boost: { services: this.servicesPaused, oneDrive: !!this.oneDrivePath, standby: this.ramWatching },
+      ram: {
+        top: topRam(procs, this, 10),
+        used: this.current?.ramUsed || 0,
+        total: this.current?.ramTotal || 0,
+        trims: this.ram.trims,
+        freed: this.ram.freed,
+        watcher: this.win.ramStatus?.() || null,
+      },
     };
   }
+}
+
+/** Die größten RAM-Fresser, nach Programm zusammengefasst: [{ exe, name, ram, count, level }] */
+function topRam(procs, engine, n) {
+  const groups = new Map();
+  const rules = engine.settings.data.rules;
+  for (const p of procs) {
+    if (R.isProtected(p)) continue;
+    const exe = R.exeName(p.name);
+    const g = groups.get(exe) || { exe, name: null, path: p.path, ram: 0, count: 0, level: null };
+    g.ram += p.ram || 0;
+    g.count++;
+    if (!g.path && p.path) g.path = p.path;
+    groups.set(exe, g);
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.ram - a.ram)
+    .slice(0, n)
+    .map((g) => {
+      const rule = rules.find((r) => r.enabled && R.exeName(r.exe) === g.exe);
+      return { ...g, name: rule?.name || engine.descriptions.get(g.path) || g.exe.replace(/\.exe$/, ""), level: rule?.level || null };
+    });
 }
 
 const round1 = (v) => (v == null || Number.isNaN(v) ? null : Math.round(v * 10) / 10);

@@ -17,15 +17,30 @@ const LIST_CMD =
   "[pscustomobject]@{i=$_.Id;n=$_.ProcessName;p=$_.Path;c=$c;t=$_.MainWindowTitle;w=$_.WorkingSet64} }); " +
   "ConvertTo-Json -InputObject $r -Compress -Depth 2";
 
-/** Befehl: Priorität/Kerne setzen, vorher die alten Werte lesen (für das Zurücksetzen) */
+/** C#-Hilfe für die Speicher-Priorität (Get/SetProcessInformation, ProcessMemoryPriority) */
+const MEMPRIO_TYPE =
+  "if(-not ('VorrangPrio' -as [type])){Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class VorrangPrio { " +
+  "[StructLayout(LayoutKind.Sequential)] struct MPI { public uint P; } " +
+  "[DllImport(\"kernel32.dll\", SetLastError = true)] static extern bool SetProcessInformation(IntPtr h, int cls, ref MPI i, int size); " +
+  "[DllImport(\"kernel32.dll\", SetLastError = true)] static extern bool GetProcessInformation(IntPtr h, int cls, ref MPI i, int size); " +
+  "public static int Get(IntPtr h) { MPI m = new MPI(); return GetProcessInformation(h, 0, ref m, 4) ? (int)m.P : -1; } " +
+  "public static bool Set(IntPtr h, int p) { MPI m = new MPI(); m.P = (uint)p; return SetProcessInformation(h, 0, ref m, 4); } }'}; ";
+
+/** Befehl: Priorität/Kerne/Speicher-Priorität setzen, vorher die alten Werte lesen (für das Zurücksetzen) */
 function setCmd(actions) {
   const parts = actions.map((a) => {
     const pid = a.pid | 0;
     const prio = a.priority ? `$p.PriorityClass=${psq(a.priority)};` : "";
     const aff = a.affinity != null ? `$p.ProcessorAffinity=[IntPtr][int64]${toInt64(a.affinity)};` : "";
-    return `try{$p=[Diagnostics.Process]::GetProcessById(${pid});$o=[pscustomobject]@{i=${pid};priority=$p.PriorityClass.ToString();affinity=([int64]$p.ProcessorAffinity).ToString()};${prio}${aff}$o}catch{[pscustomobject]@{i=${pid};error=$_.Exception.Message}}`;
+    const mp = Math.max(1, Math.min(5, a.memPriority | 0));
+    // Speicher-Priorität eigenständig: klappt sie nicht (Zugriff), sollen Priorität und Kerne trotzdem gesetzt werden
+    const mem = a.memPriority
+      ? `try{$h=$p.Handle;$o.memPriority=[VorrangPrio]::Get($h);$o.memPriorityOk=[VorrangPrio]::Set($h,${mp})}catch{$o.memPriority=$null;$o.memPriorityOk=$false};`
+      : "";
+    return `try{$p=[Diagnostics.Process]::GetProcessById(${pid});$o=[pscustomobject]@{i=${pid};priority=$p.PriorityClass.ToString();affinity=([int64]$p.ProcessorAffinity).ToString();memPriority=$null;memPriorityOk=$null};${prio}${aff}${mem}$o}catch{[pscustomobject]@{i=${pid};error=$_.Exception.Message}}`;
   });
-  return `$r=@(${parts.join(";")}); ConvertTo-Json -InputObject $r -Compress -Depth 2`;
+  const needType = actions.some((a) => a.memPriority);
+  return `${needType ? MEMPRIO_TYPE : ""}$r=@(${parts.join(";")}); ConvertTo-Json -InputObject $r -Compress -Depth 2`;
 }
 
 const GPU_KEY = "HKCU:\\Software\\Microsoft\\DirectX\\UserGpuPreferences";
@@ -110,34 +125,107 @@ function servicesScript() {
   ].join("\r\n");
 }
 
+/* ---- RAM: Standby-Liste leeren (wie ISLC) – braucht Admin, läuft als Aufgabe ---- */
+const TASK_RAM_START = "RAM-Waechter starten";
+const TASK_RAM_STOP = "RAM-Waechter stoppen";
+const TASK_RAM_NOW = "Standby jetzt leeren";
+const RAM_STATUS_FILE = "ram-status.json";
+
+/** C#: Recht aktivieren, Standby-Liste leeren, Speicherlisten lesen (freier + Standby-RAM in Bytes) */
+const RAM_CS =
+  "using System; using System.Runtime.InteropServices; public static class VorrangRam { " +
+  "[StructLayout(LayoutKind.Sequential, Pack = 4)] struct TP { public int Count; public long Luid; public int Attr; } " +
+  "[DllImport(\"advapi32.dll\", SetLastError = true)] static extern bool OpenProcessToken(IntPtr h, uint acc, out IntPtr tok); " +
+  "[DllImport(\"advapi32.dll\", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool LookupPrivilegeValue(string sys, string name, out long luid); " +
+  "[DllImport(\"advapi32.dll\", SetLastError = true)] static extern bool AdjustTokenPrivileges(IntPtr tok, bool dis, ref TP n, int len, IntPtr p, IntPtr r); " +
+  "[DllImport(\"kernel32.dll\")] static extern IntPtr GetCurrentProcess(); " +
+  "[DllImport(\"ntdll.dll\")] static extern int NtSetSystemInformation(int cls, ref int info, int len); " +
+  "[DllImport(\"ntdll.dll\")] static extern int NtQuerySystemInformation(int cls, IntPtr info, int len, out int ret); " +
+  "public static bool Enable(string name) { IntPtr t; if (!OpenProcessToken(GetCurrentProcess(), 0x28, out t)) return false; TP tp = new TP(); tp.Count = 1; tp.Attr = 2; long l; " +
+  "if (!LookupPrivilegeValue(null, name, out l)) return false; tp.Luid = l; if (!AdjustTokenPrivileges(t, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return false; return Marshal.GetLastWin32Error() == 0; } " +
+  "public static int Purge() { int c = 4; return NtSetSystemInformation(80, ref c, 4); } " + // 80 = SystemMemoryListInformation, 4 = MemoryPurgeStandbyList
+  "public static long[] Lists() { int size = 256; IntPtr b = Marshal.AllocHGlobal(size); try { int ret; if (NtQuerySystemInformation(80, b, size, out ret) != 0) return null; " +
+  "long ps = 4096; long zero = Marshal.ReadIntPtr(b, 0).ToInt64(); long free = Marshal.ReadIntPtr(b, IntPtr.Size).ToInt64(); long standby = 0; " +
+  "for (int i = 0; i < 8; i++) standby += Marshal.ReadIntPtr(b, IntPtr.Size * (5 + i)).ToInt64(); return new long[] { (zero + free) * ps, standby * ps }; } finally { Marshal.FreeHGlobal(b); } } }";
+
+/**
+ * Das RAM-Skript: "start" = Wächter (alle 3 s: ist weniger als 1 GB frei und mehr als 1 GB im Standby → leeren;
+ * endet, wenn "stop" kommt, Vorrang nicht mehr läuft oder nach 8 h), "now" = einmal leeren, "stop".
+ * Schreibt den Stand nach ram-status.json (für die Anzeige in Vorrang).
+ */
+function ramScript() {
+  return [
+    "param([string]$mode)",
+    "$flag = Join-Path $PSScriptRoot 'waechter.an'",
+    `$status = Join-Path $PSScriptRoot '${RAM_STATUS_FILE}'`,
+    "if ($mode -eq 'stop') { Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue; exit 0 }",
+    `Add-Type -TypeDefinition ${psq(RAM_CS)}`,
+    "$priv = [VorrangRam]::Enable('SeProfileSingleProcessPrivilege')",
+    "$purges = 0; $freed = [int64]0; $last = $null",
+    "function Now { [DateTimeOffset]::Now.ToUnixTimeMilliseconds() }",
+    "function Write-Status($l, $running) {",
+    "  $o = [pscustomobject]@{ at = (Now); running = $running; priv = $priv; free = $null; standby = $null; purges = $purges; freed = $freed; last = $last }",
+    "  if ($l) { $o.free = $l[0]; $o.standby = $l[1] }",
+    "  $o | ConvertTo-Json -Compress | Set-Content -LiteralPath $status -Encoding UTF8",
+    "}",
+    "function Purge-Now {",
+    "  $b = [VorrangRam]::Lists(); $r = [VorrangRam]::Purge()",
+    "  if ($r -eq 0) { $script:purges++; $script:last = (Now); $a = [VorrangRam]::Lists(); if ($a -and $b) { $script:freed += [Math]::Max([int64]0, $a[0] - $b[0]) } }",
+    "  return $r",
+    "}",
+    "if ($mode -eq 'now') { $r = Purge-Now; Write-Status ([VorrangRam]::Lists()) $false; exit 0 }",
+    "Set-Content -LiteralPath $flag -Value (Get-Date -Format o)",
+    "$until = (Get-Date).AddHours(8)",
+    "while ((Test-Path -LiteralPath $flag) -and (Get-Date) -lt $until -and (Get-Process -Name 'Vorrang' -ErrorAction SilentlyContinue)) {",
+    "  $l = [VorrangRam]::Lists()",
+    "  if ($l -and $l[1] -ge 1GB -and $l[0] -lt 1GB -and (-not $last -or ((Now) - $last) -ge 10000)) { [void](Purge-Now); $l = [VorrangRam]::Lists() }",
+    "  Write-Status $l $true",
+    "  Start-Sleep -Seconds 3",
+    "}",
+    "Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue",
+    "Write-Status ([VorrangRam]::Lists()) $false",
+  ].join("\r\n");
+}
+
+const ALL_TASKS = [TASK_PAUSE, TASK_RESUME, TASK_RAM_START, TASK_RAM_STOP, TASK_RAM_NOW];
+
+/** Datei-Inhalt sicher ins Skript bringen (Base64 – keine Probleme mit Anführungszeichen) */
+const writeFile = (target, text) =>
+  `  [IO.File]::WriteAllText(${target}, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(text, "utf8").toString("base64")}')), (New-Object Text.UTF8Encoding $true))`;
+
 /** Einrichtungs-Skript (läuft mit Admin): Ordner + Skript + Rechte + Aufgaben für den angemeldeten Benutzer */
 function servicesSetupScript(user, resultFile, remove = false) {
   const dir = "$env:ProgramData\\Vorrang";
-  const action = (mode) => `(New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script + '" ${mode}'))`;
+  const action = (file, mode) => `(New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $dir '${file}') + '" ${mode}'))`;
+  const reg = (name, file, mode, settings = "$settings") =>
+    `  Register-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName ${psq(name)} -Action ${action(file, mode)} -Principal $principal -Settings ${settings} -Force | Out-Null`;
   const lines = [
     "$ErrorActionPreference='Stop'",
     "try {",
     `  $dir = "${dir}"`,
-    "  $script = Join-Path $dir 'dienste.ps1'",
     ...(remove
       ? [
-          `  foreach ($t in @(${psq(TASK_PAUSE)}, ${psq(TASK_RESUME)})) { Unregister-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }`,
-          "  if (Test-Path $script) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script resume }",
+          `  foreach ($t in @(${ALL_TASKS.map(psq).join(", ")})) { Unregister-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }`,
+          "  if (Test-Path (Join-Path $dir 'dienste.ps1')) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir 'dienste.ps1') resume }",
+          "  if (Test-Path (Join-Path $dir 'ram.ps1')) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir 'ram.ps1') stop }",
+          "  Start-Sleep -Seconds 4",
           "  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue",
         ]
       : [
           "  New-Item -ItemType Directory -Path $dir -Force | Out-Null",
-          // Nur Admins und SYSTEM dürfen schreiben – sonst könnte jedes Programm das Skript mit Admin-Rechten ausführen lassen
+          // Nur Admins und SYSTEM dürfen schreiben – sonst könnte jedes Programm Skripte mit Admin-Rechten ausführen lassen
           "  & icacls.exe $dir /setowner '*S-1-5-32-544' /T /C | Out-Null",
           "  & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null",
-          "  $text = @'",
-          servicesScript(),
-          "'@",
-          "  Set-Content -LiteralPath $script -Value $text -Encoding UTF8",
+          writeFile("(Join-Path $dir 'dienste.ps1')", servicesScript()),
+          writeFile("(Join-Path $dir 'ram.ps1')", ramScript()),
           `  $principal = New-ScheduledTaskPrincipal -UserId ${psq(user)} -LogonType Interactive -RunLevel Highest`,
           "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances Queue",
-          `  Register-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName ${psq(TASK_PAUSE)} -Action ${action("pause")} -Principal $principal -Settings $settings -Force | Out-Null`,
-          `  Register-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName ${psq(TASK_RESUME)} -Action ${action("resume")} -Principal $principal -Settings $settings -Force | Out-Null`,
+          "  $long = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 9) -MultipleInstances IgnoreNew",
+          reg(TASK_PAUSE, "dienste.ps1", "pause"),
+          reg(TASK_RESUME, "dienste.ps1", "resume"),
+          reg(TASK_RAM_START, "ram.ps1", "start", "$long"),
+          reg(TASK_RAM_STOP, "ram.ps1", "stop"),
+          reg(TASK_RAM_NOW, "ram.ps1", "now"),
         ]),
     `  'ok' | Set-Content -LiteralPath ${psq(resultFile)} -Encoding UTF8`,
     "} catch {",
@@ -243,7 +331,15 @@ class WinCtl {
   async apply(actions) {
     if (!actions.length) return [];
     const r = (await this.ps.run(setCmd(actions))) || [];
-    return r.map((x) => (x.error ? { pid: x.i, error: x.error } : { pid: x.i, priority: x.priority, affinity: fromInt64(x.affinity) }));
+    return r.map((x) => {
+      if (x.error) return { pid: x.i, error: x.error };
+      const out = { pid: x.i, priority: x.priority, affinity: fromInt64(x.affinity) };
+      if (x.memPriorityOk != null) {
+        out.memPriority = x.memPriority > 0 ? x.memPriority : null;
+        out.memPriorityOk = x.memPriorityOk === true;
+      }
+      return out;
+    });
   }
 
   async gpu(exePath, pref) {
@@ -286,11 +382,31 @@ class WinCtl {
 
   /** Dienste-Aufgaben eingerichtet? */
   async servicesReady() {
+    return taskExists(TASK_PAUSE);
+  }
+
+  /** RAM-Aufgaben eingerichtet? (fehlen nach einem Update von 1.1, bis man die Admin-Einrichtung erneut bestätigt) */
+  async ramReady() {
+    return taskExists(TASK_RAM_START);
+  }
+
+  /** RAM-Wächter starten/stoppen (Standby-Liste automatisch leeren) */
+  async ramWatch(on) {
+    await execText("schtasks.exe", ["/run", "/tn", TASK_PATH + (on ? TASK_RAM_START : TASK_RAM_STOP)]);
+  }
+
+  /** Standby-Liste jetzt einmal leeren */
+  async ramPurgeNow() {
+    await execText("schtasks.exe", ["/run", "/tn", TASK_PATH + TASK_RAM_NOW]);
+  }
+
+  /** Stand des RAM-Wächters (oder null) */
+  ramStatus() {
     try {
-      await execText("schtasks.exe", ["/query", "/tn", TASK_PATH + TASK_PAUSE]);
-      return true;
+      const file = path.join(process.env.ProgramData || "C:\\ProgramData", "Vorrang", RAM_STATUS_FILE);
+      return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\ufeff/, ""));
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -364,10 +480,19 @@ class WinCtl {
   }
 }
 
+async function taskExists(name) {
+  try {
+    await execText("schtasks.exe", ["/query", "/tn", TASK_PATH + name]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function execText(file, args) {
   return new Promise((resolve, reject) => {
     execFile(file, args, { windowsHide: true, timeout: 120000 }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))));
   });
 }
 
-module.exports = { WinCtl, PowerShell, psq, toInt64, fromInt64, setCmd, gpuCmd, infoCmd, qosScript, trimCmd, connCmd, pingCmd, servicesScript, servicesSetupScript, SERVICES, TASK_PATH, TASK_PAUSE, TASK_RESUME, LIST_CMD, GPU_KEY };
+module.exports = { WinCtl, PowerShell, psq, toInt64, fromInt64, setCmd, gpuCmd, infoCmd, qosScript, trimCmd, connCmd, pingCmd, servicesScript, servicesSetupScript, ramScript, RAM_CS, SERVICES, TASK_PATH, TASK_PAUSE, TASK_RESUME, TASK_RAM_START, TASK_RAM_STOP, TASK_RAM_NOW, ALL_TASKS, LIST_CMD, GPU_KEY };

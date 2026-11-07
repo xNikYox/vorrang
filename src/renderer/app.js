@@ -24,6 +24,7 @@ $$(".tab").forEach((b) => b.addEventListener("click", () => {
   $$(".tab").forEach((x) => x.classList.toggle("active", x === b));
   $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + b.dataset.tab));
   if (b.dataset.tab === "regeln") renderRules();
+  if (b.dataset.tab === "ram") renderRam();
 }));
 
 /* ---------------- Status & Kerne ---------------- */
@@ -211,6 +212,78 @@ $("#showAll").addEventListener("change", async (e) => {
   renderPrograms();
 });
 
+/* ---------------- RAM ---------------- */
+const gb = (b) => (b / 1024 ** 3).toFixed(1).replace(".", ",") + " GB";
+
+function renderRam() {
+  const r = snap?.ram;
+  if (!r) return;
+  const pct = r.total ? (r.used / r.total) * 100 : 0;
+  $("#ramUsed").textContent = Math.round(pct) + " %";
+  $("#ramOf").textContent = r.total ? `${gb(r.used)} von ${gb(r.total)} belegt` : "";
+  const bar = $("#ramBar");
+  bar.style.width = pct.toFixed(1) + "%";
+  bar.className = pct >= 90 ? "bad" : pct >= 80 ? "mid" : "";
+  const w = r.watcher;
+  const fresh = w && Date.now() - w.at < 15000;
+  $("#ramFree").textContent = fresh && w.free != null ? gb(w.free) : r.total ? gb(r.total - r.used) + " verfügbar" : "–";
+  $("#ramStandby").textContent = fresh && w.standby != null ? gb(w.standby) : "–";
+  $("#ramTrims").textContent = r.trims ? `${r.trims}× · ${Math.round(r.freed / 1e6)} MB` : "–";
+  $("#ramPurges").textContent = w?.purges ? `${w.purges}×` + (w.freed ? ` · ${gb(w.freed)}` : "") : "–";
+  $("#ramHint").textContent = !info.ramReady
+    ? "Braucht „Standby-Liste leeren“ (einmal Admin-Rechte)."
+    : w?.running && fresh ? "Wächter aktiv – leert bei unter 1 GB freiem RAM." : "Der Wächter läuft im Spielmodus.";
+  $("#purgeBtn").disabled = !info.ramReady;
+  const max = Math.max(1, ...r.top.map((t) => t.ram));
+  const box = $("#ramTop");
+  box.innerHTML = "";
+  for (const t of r.top) {
+    const row = document.createElement("div");
+    row.className = "ramrow";
+    row.innerHTML = `<div class="ico"></div><div class="pname"><b></b><small></small></div><div class="rbar"><i></i></div><div class="rv"></div><span class="lvl"></span>`;
+    const src = t.path && iconCache[t.path];
+    if (src) $(".ico", row).innerHTML = `<img alt="" src="${src}">`;
+    else $(".ico", row).textContent = t.name.slice(0, 1).toUpperCase();
+    $(".pname b", row).textContent = t.name;
+    $(".pname small", row).textContent = t.exe + (t.count > 1 ? ` · ${t.count} Prozesse` : "");
+    $(".rbar i", row).style.width = ((t.ram / max) * 100).toFixed(1) + "%";
+    $(".rv", row).textContent = t.ram >= 1024 ** 3 ? gb(t.ram) : Math.round(t.ram / 1024 ** 2) + " MB";
+    const lvl = $(".lvl", row);
+    lvl.textContent = info.levels[t.level || "normal"];
+    lvl.classList.add(t.level || "normal");
+    box.append(row);
+  }
+  loadIcons(r.top.map((t) => ({ path: t.path })));
+}
+
+$("#standbySwitch").addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  e.target.disabled = true;
+  if (on && !info.ramReady) toast("Windows fragt nach Admin-Rechten …", 8000);
+  try {
+    const r = await api.setStandby(on);
+    info = r.info;
+    toast(r.result === "ok" ? (on ? "Standby-Liste wird im Spielmodus geleert" : "Standby-Leeren aus") : r.result, 6000);
+  } finally {
+    e.target.disabled = false;
+    e.target.checked = !!info.settings.standbyPurge;
+    renderRam();
+  }
+});
+
+$("#purgeBtn").addEventListener("click", async () => {
+  const b = $("#purgeBtn");
+  b.disabled = true;
+  try {
+    const r = await api.purgeNow();
+    if (r.result !== "ok") toast(r.result, 6000);
+    else if (!r.status.priv) toast("Windows hat das Recht zum Leeren verweigert.", 6000);
+    else toast(`Standby-Liste geleert – jetzt ${gb(r.status.free)} frei`);
+  } finally {
+    b.disabled = !info.ramReady;
+  }
+});
+
 /* ---------------- Regeln ---------------- */
 const opt = (v, label, cur) => `<option value="${v}"${String(cur) === v ? " selected" : ""}>${label}</option>`;
 
@@ -327,6 +400,7 @@ function renderSettings() {
   });
   $("#showAll").checked = !!s.showAll;
   $("#servicesSwitch").checked = !!s.pauseServices;
+  $("#standbySwitch").checked = !!s.standbyPurge;
   $$("[data-hotkey]").forEach((el) => {
     if (document.activeElement !== el) el.value = showKey(s[el.dataset.hotkey]);
   });
@@ -420,6 +494,7 @@ api.onState((s) => {
   renderHero();
   renderStats();
   renderPrograms();
+  if ($("#page-ram").classList.contains("active")) renderRam();
 });
 api.onMeasure((m) => renderMeasure({ running: true, ...m }));
 api.onInfo((i) => {

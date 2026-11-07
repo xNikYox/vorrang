@@ -73,3 +73,23 @@ test("Neue Befehle: nur Zahlen als pid, Dienste-Skript ändert nur vier Dienste"
   assert.match(W.servicesSetupScript("u", "C:\\r.txt", true), /Unregister-ScheduledTask/);
   assert.match(W.servicesScript(), /Stop-Service -Name \$n -Force -NoWait/);
 });
+
+test("RAM: Speicher-Priorität im Befehl, Wächter-Skript und Aufgaben", () => {
+  const set = W.setCmd([{ pid: 9, memPriority: 9 }]);
+  assert.match(set, /VorrangPrio/);
+  assert.match(set, /\[VorrangPrio\]::Set\(\$h,5\)/); // auf 1..5 begrenzt
+  assert.doesNotMatch(W.setCmd([{ pid: 9, priority: "Idle" }]), /VorrangPrio/); // ohne Speicher-Priorität kein Add-Type
+  const ram = W.ramScript();
+  assert.match(ram, /\$l\[1\] -ge 1GB -and \$l\[0\] -lt 1GB/);
+  assert.match(ram, /Get-Process -Name 'Vorrang'/); // endet ohne Vorrang
+  assert.match(ram, /AddHours\(8\)/);
+  const setup = W.servicesSetupScript("u", "C:\\r.txt");
+  for (const t of W.ALL_TASKS) assert.ok(setup.includes(`-TaskName '${t}'`), t);
+  assert.match(setup, /-ExecutionTimeLimit \(New-TimeSpan -Hours 9\) -MultipleInstances IgnoreNew/);
+  const b64 = /FromBase64String\('([^']+)'\)/g;
+  const files = [...setup.matchAll(b64)].map((m) => Buffer.from(m[1], "base64").toString("utf8"));
+  assert.deepEqual(files, [W.servicesScript(), ram]);
+  const remove = W.servicesSetupScript("u", "C:\\r.txt", true);
+  for (const t of W.ALL_TASKS) assert.ok(remove.includes(`'${t}'`), t);
+  assert.match(remove, /ram\.ps1'\) stop/);
+});
