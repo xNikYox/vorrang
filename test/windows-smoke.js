@@ -86,12 +86,17 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     assert.doesNotMatch(acl, /(BUILTIN\\Users|VORDEFINIERT\\Benutzer):\(OI\)\(CI\)\((F|M|W)/, "Benutzer dürfen das Skript nicht ändern");
     const svc = () => JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-Command", "ConvertTo-Json @(Get-Service wuauserv,BITS,DoSvc,WSearch -ErrorAction SilentlyContinue | ForEach-Object { @{n=$_.Name;s=$_.Status.ToString()} }) -Compress"]).toString() || "[]");
     console.log("Dienste vorher:", JSON.stringify(svc()));
+    const tp = Date.now();
     execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "pause"]);
-    await wait(4000);
+    console.log(`Pausieren dauerte ${Date.now() - tp} ms`);
     const paused = fs.existsSync(dir + "\\pausiert.txt") ? fs.readFileSync(dir + "\\pausiert.txt", "utf8").split(/\r?\n/).filter(Boolean) : [];
-    const mid = svc();
+    let mid = svc();
+    for (let i = 0; i < 10 && paused.some((n) => mid.find((x) => x.n === n)?.s === "Running"); i++) {
+      await wait(2000);
+      mid = svc();
+    }
     console.log("pausiert:", paused, "· Dienste:", JSON.stringify(mid));
-    for (const n of paused) assert.notEqual(mid.find((x) => x.n === n)?.s, "Running", n + " läuft noch");
+    for (const n of paused) assert.notEqual(mid.find((x) => x.n === n)?.s, "Running", n + " läuft nach 20 s noch (oder wurde von Windows neu gestartet)");
     execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "resume"]);
     await wait(3000);
     const after = svc();

@@ -98,6 +98,9 @@ function servicesScript() {
     "  if (Test-Path $state) { $run = @($run + @(Get-Content $state)) | Where-Object { $_ } | Select-Object -Unique }",
     "  Set-Content -Path $state -Value $run",
     "  foreach ($n in $run) { Stop-Service -Name $n -Force -NoWait -ErrorAction SilentlyContinue }",
+    // bis zu 15 s warten, bis alle gestoppt sind (manche brauchen etwas)
+    "  $end = (Get-Date).AddSeconds(15)",
+    "  while ((Get-Date) -lt $end -and @(Get-Service -Name $run -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' }).Count) { Start-Sleep -Milliseconds 500 }",
     "} elseif ($mode -eq 'resume') {",
     "  if (Test-Path $state) {",
     "    foreach ($n in @(Get-Content $state)) { if ($n) { Start-Service -Name $n -ErrorAction SilentlyContinue } }",
