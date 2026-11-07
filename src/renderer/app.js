@@ -52,6 +52,68 @@ function renderCores(bg) {
   $("#bgCoresOut").textContent = `${bg} von ${n} Kernen`;
 }
 
+/* ---------------- Messwerte & Messung ---------------- */
+function spark(svg, values, max) {
+  const v = values.map((x) => (x == null ? null : x));
+  const top = max || Math.max(10, ...v.filter((x) => x != null)) * 1.15;
+  const n = Math.max(2, v.length);
+  const pts = v.map((x, i) => (x == null ? null : `${((i / (n - 1)) * 100).toFixed(1)},${(28 - (Math.min(x, top) / top) * 26 - 1).toFixed(1)}`)).filter(Boolean);
+  $("polyline", svg).setAttribute("points", pts.join(" "));
+}
+
+function renderStats() {
+  const m = snap?.metrics || {};
+  const h = snap?.history || [];
+  const fmt = { cpu: (v) => v + " %", game: (v) => v + " %", ram: (v) => v + " %", ping: (v) => v + " ms" };
+  for (const el of $$("#stats .stat")) {
+    const k = el.dataset.k;
+    $("b", el).textContent = m[k] == null ? "–" : fmt[k](Math.round(m[k]));
+    spark($("svg", el), h.map((p) => p[k]), k === "ping" ? 0 : 100);
+  }
+  $("#stats .stat[data-k=ping]").title = m.server ? "Server: " + m.server : "Ping zum Spielserver (sobald ein Spiel verbunden ist)";
+  const b = $("#measureBtn");
+  b.disabled = !!snap?.measuring || !snap?.game;
+  b.title = snap?.game ? "Misst je 20 Sekunden ohne und mit Vorrang" : "Starte zuerst ein Spiel";
+}
+
+function renderMeasure(r) {
+  const box = $("#measure");
+  if (!r) return;
+  box.hidden = false;
+  if (r.running) {
+    box.innerHTML = `<div class="mhead"><b>Messe ${esc(r.phase)} …</b><span class="hint">Bitte normal weiterspielen</span></div><div class="mbar"><i></i></div>`;
+    $(".mbar i", box).style.width = Math.round(r.part * 100) + "%"; // per Skript: Inline-Styles verbietet die CSP
+    return;
+  }
+  if (r.error) {
+    box.innerHTML = `<div class="mhead"><b>Messung abgebrochen</b><button class="icon-btn" id="measureClose" aria-label="Schließen">✕</button></div><p class="hint">${esc(r.error)}</p>`;
+  } else {
+    const { before: a, after: b } = r;
+    const cell = (x, y, better, unit) => {
+      if (x == null || y == null) return `<div>${y == null ? "–" : y + unit}</div>`;
+      const d = Math.round((y - x) * 10) / 10;
+      const good = better === "up" ? d > 0 : d < 0;
+      return `<div>${y}${unit} <span class="${d === 0 ? "" : good ? "up" : "down"}">${d > 0 ? "+" : ""}${d}</span></div>`;
+    };
+    box.innerHTML = `<div class="mhead"><b>Ergebnis: ${esc(r.game)}</b><button class="icon-btn" id="measureClose" aria-label="Schließen">✕</button></div>
+      <div class="mgrid">
+        <div class="h"></div><div class="h">Spiel-CPU</div><div class="h">Ping</div><div class="h">Ping-Schwankung</div>
+        <div>Ohne Vorrang</div><div>${a.game ?? "–"} %</div><div>${a.ping ?? "–"} ms</div><div>${a.jitter ?? "–"} ms</div>
+        <div><b>Mit Vorrang</b></div>${cell(a.game, b.game, "up", " %")}${cell(a.ping, b.ping, "down", " ms")}${cell(a.jitter, b.jitter, "down", " ms")}
+      </div>
+      <p class="hint">Mehr Spiel-CPU = mehr Rechenzeit fürs Spiel. Die Wirkung ist am größten, wenn nebenbei viel läuft (Browser, Downloads, Discord).</p>`;
+  }
+  $("#measureClose")?.addEventListener("click", () => (box.hidden = true));
+}
+
+$("#measureBtn").addEventListener("click", async () => {
+  renderMeasure({ running: true, phase: "ohne Vorrang", part: 0 });
+  $("#measureBtn").disabled = true;
+  const r = await api.measure();
+  renderMeasure(r.error ? { error: r.error } : r.result);
+  renderStats();
+});
+
 $("#bgCores").addEventListener("input", (e) => renderCores(Number(e.target.value)));
 $("#bgCores").addEventListener("change", async (e) => {
   info = await api.saveSettings({ backgroundCores: Number(e.target.value) });
@@ -111,14 +173,15 @@ function renderPrograms() {
     const sub = $(".pname small", row);
     const parts = [p.exe + (p.count > 1 ? ` · ${p.count} Prozesse` : "")];
     if (p.applied && snap.active) parts.push(p.level === "game" ? "bekommt Vorrang" : "gedrosselt");
-    sub.innerHTML = esc(parts.join(" · ")) + (p.errors.length ? ` · <span class="warn" title="${esc(p.errors.join("\n"))}">kein Zugriff (läuft als Admin?)</span>` : "");
+    sub.innerHTML = esc(parts.join(" · ")) + (p.auto ? ` <span class="badge" title="Aus einer Spiele-Bibliothek erkannt – wähle eine Stufe, um das zu ändern">automatisch erkannt</span>` : "") + (p.errors.length ? ` · <span class="warn" title="${esc(p.errors.join("\n"))}">kein Zugriff (läuft als Admin?)</span>` : "");
     $(".bar i", row).style.width = Math.min(100, p.cpu) + "%";
     $(".cpu", row).textContent = p.cpu.toFixed(1) + " %";
     $(".ram", row).textContent = fmtRam(p.ram);
     const old = $(".levels", row);
-    if (old.dataset.level !== (p.level || "normal")) {
+    if (old.dataset.level !== (p.level || "normal") || old.dataset.auto !== String(p.auto)) {
       const seg = levelSeg(p.level, (lv) => setProgramLevel(p, lv));
       seg.dataset.level = p.level || "normal";
+      seg.dataset.auto = String(p.auto);
       old.replaceWith(seg);
     }
     if (box.children[i] !== row) box.insertBefore(row, box.children[i] || null);
@@ -132,7 +195,7 @@ async function setProgramLevel(p, level) {
   const rules = structuredClone(info.settings.rules);
   const rule = rules.find((r) => r.id === p.rule);
   if (rule) rule.level = level;
-  else if (level !== "normal") {
+  else if (level !== "normal" || p.auto) { // auch „Normal“ speichern, wenn ein erkanntes Spiel keins ist
     rules.push({ id: p.exe.replace(/\.exe$/, "").replace(/[^\w-]/g, "") + "-" + Date.now().toString(36).slice(-4), name: p.name, exe: p.exe, level, enabled: true });
   } else return;
   info = await api.saveRules(rules);
@@ -263,6 +326,11 @@ function renderSettings() {
     else el.value = String(s[k]);
   });
   $("#showAll").checked = !!s.showAll;
+  $("#servicesSwitch").checked = !!s.pauseServices;
+  $$("[data-hotkey]").forEach((el) => {
+    if (document.activeElement !== el) el.value = showKey(s[el.dataset.hotkey]);
+  });
+  $("#rootsText").textContent = "Steam, Epic, Battle.net, Riot, Xbox, EA, Ubisoft, GOG" + (info.gameRoots ? ` · ${info.gameRoots} Bibliotheken gefunden` : "");
   $("#version").textContent = info.version;
   $("#cpuName").textContent = info.cpuModel ? "· " + info.cpuModel : "";
   renderUpdate(info.update);
@@ -270,9 +338,53 @@ function renderSettings() {
 
 $$("[data-set]").forEach((el) => el.addEventListener("change", async () => {
   const k = el.dataset.set;
-  info = await api.saveSettings({ [k]: el.type === "checkbox" ? el.checked : Number(el.value) });
+  info = await api.saveSettings({ [k]: el.type === "checkbox" ? el.checked : el.dataset.type === "text" ? el.value : Number(el.value) });
   renderHero();
 }));
+
+$("#servicesSwitch").addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  e.target.disabled = true;
+  toast("Windows fragt nach Admin-Rechten …", 8000);
+  try {
+    const r = await api.setServices(on);
+    info = r.info;
+    toast(r.result === "ok" ? (on ? "Windows-Dienste werden im Spielmodus pausiert" : "Dienste-Pause entfernt") : r.result, 6000);
+  } finally {
+    e.target.disabled = false;
+    e.target.checked = !!info.settings.pauseServices;
+  }
+});
+
+/* Tastenkürzel aufnehmen: Feld anklicken, Kombination drücken; Entf = keins, Esc = abbrechen */
+const KEY_NAMES = { Control: "Strg", Alt: "Alt", Shift: "Umschalt", Super: "Win" };
+const showKey = (acc) => (acc ? acc.split("+").map((k) => KEY_NAMES[k] || k).join(" + ") : "keins");
+function accelerator(e) {
+  let key = null;
+  if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+  else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(e.code)) key = e.code;
+  else if (/^Numpad\d$/.test(e.code)) key = "num" + e.code.slice(6);
+  else if (["Home", "End", "PageUp", "PageDown", "Insert", "Pause"].includes(e.code)) key = e.code;
+  if (!key) return null;
+  const mods = [e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super"].filter(Boolean);
+  if (!mods.length && !/^F\d/.test(key)) return null; // ohne Strg/Alt nur F-Tasten
+  return [...mods, key].join("+");
+}
+$$("[data-hotkey]").forEach((el) => {
+  el.addEventListener("focus", () => (el.value = "Tasten drücken …"));
+  el.addEventListener("blur", () => (el.value = showKey(info.settings[el.dataset.hotkey])));
+  el.addEventListener("keydown", async (e) => {
+    e.preventDefault();
+    if (e.key === "Escape") return el.blur();
+    let acc;
+    if (e.key === "Backspace" || e.key === "Delete") acc = "";
+    else if (!(acc = accelerator(e))) return;
+    info = await api.saveSettings({ [el.dataset.hotkey]: acc });
+    if (info.hotkeyError) toast(info.hotkeyError, 5000);
+    el.blur();
+  });
+});
 
 function renderUpdate(u) {
   const t = $("#updateText");
@@ -297,6 +409,7 @@ $("#updateBtn").addEventListener("click", () => (info.update.status === "ready" 
 /* ---------------- Start ---------------- */
 function renderAll() {
   renderHero();
+  renderStats();
   renderPrograms();
   renderSettings();
   if ($("#page-regeln").classList.contains("active")) renderRules();
@@ -305,9 +418,16 @@ function renderAll() {
 api.onState((s) => {
   snap = s;
   renderHero();
+  renderStats();
   renderPrograms();
 });
+api.onMeasure((m) => renderMeasure({ running: true, ...m }));
+api.onInfo((i) => {
+  info = i;
+  renderSettings();
+});
 api.onUpdate((u) => {
+  if (!info) return;
   info.update = u;
   renderUpdate(u);
 });

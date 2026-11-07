@@ -32,6 +32,15 @@ function defaultRules() {
     { id: "firefox", name: "Firefox", exe: "firefox.exe", level: "low", enabled: true },
     { id: "chrome", name: "Google Chrome", exe: "chrome.exe", level: "low", enabled: true },
     { id: "msedge", name: "Microsoft Edge", exe: "msedge.exe", level: "low", enabled: true },
+    ...presetRules(),
+  ];
+}
+
+/** Vorgaben ab Version 1.1: Discord und Spotify nur leicht drosseln, damit Sprache und Musik nicht stocken */
+function presetRules() {
+  return [
+    { id: "discord", name: "Discord", exe: "discord.exe", level: "low", cores: null, enabled: true }, // alle Kerne, nur niedrigere Priorität
+    { id: "spotify", name: "Spotify", exe: "spotify.exe", level: "low", enabled: true },
   ];
 }
 
@@ -60,17 +69,23 @@ function matches(proc, rule) {
 /**
  * Prozesse den Regeln zuordnen → Map pid → Regel. sticky (pid → Regel-ID) merkt sich frühere Treffer, damit ein Spiel
  * nicht herausfällt, wenn sich kurz sein Fenstertitel ändert (z. B. beim Laden).
+ * auto = { isGame(proc), rule(proc) }: automatisch erkannte Spiele, wenn keine eigene Regel passt (nur mit Fenster).
  */
-function assign(procs, rules, sticky = new Map()) {
+function assign(procs, rules, sticky = new Map(), auto = null) {
   const out = new Map();
   const alive = new Set(procs.map((p) => p.pid));
   for (const pid of [...sticky.keys()]) if (!alive.has(pid)) sticky.delete(pid);
   for (const p of procs) {
     let rule = rules.find((r) => matches(p, r));
-    if (!rule && sticky.has(p.pid)) rule = rules.find((r) => r.id === sticky.get(p.pid) && r.enabled && exeName(r.exe) === exeName(p.name));
+    if (!rule && sticky.has(p.pid)) {
+      const id = sticky.get(p.pid);
+      rule = rules.find((r) => r.id === id && r.enabled && exeName(r.exe) === exeName(p.name));
+      if (!rule && auto && String(id).startsWith("auto-") && !rules.some((r) => r.enabled && exeName(r.exe) === exeName(p.name))) rule = auto.rule(p);
+    }
+    if (!rule && auto && p.title && !isProtected(p) && !rules.some((r) => r.enabled && exeName(r.exe) === exeName(p.name)) && auto.isGame(p)) rule = auto.rule(p);
     if (rule) {
       out.set(p.pid, rule);
-      if (rule.title) sticky.set(p.pid, rule.id);
+      if (rule.title || rule.auto) sticky.set(p.pid, rule.id);
     }
   }
   return out;
@@ -179,4 +194,4 @@ function cpuUsage(prev, procs, seconds, cpuCount) {
   return out;
 }
 
-module.exports = { LEVELS, PRIORITIES, PROTECTED, exeName, isProtected, defaultRules, effective, matches, assign, runningGame, gameModeActive, coreMask, plan, diff, record, qosPolicies, cpuUsage };
+module.exports = { presetRules, LEVELS, PRIORITIES, PROTECTED, exeName, isProtected, defaultRules, effective, matches, assign, runningGame, gameModeActive, coreMask, plan, diff, record, qosPolicies, cpuUsage };

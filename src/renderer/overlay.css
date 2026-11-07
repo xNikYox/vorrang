@@ -1,0 +1,15 @@
+html, body { margin: 0; background: transparent; overflow: hidden; }
+body { font: 12px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: #e6ebf4; -webkit-font-smoothing: antialiased; }
+.ov {
+  margin: 4px; padding: 9px 12px 10px; border-radius: 12px;
+  background: rgba(11, 14, 20, .78); border: 1px solid rgba(94, 242, 176, .35);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.ov.idle { border-color: rgba(139, 149, 168, .35); }
+.head { display: flex; align-items: center; gap: 7px; font-weight: 650; margin-bottom: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head i { width: 8px; height: 8px; border-radius: 50%; background: #5ef2b0; flex: none; }
+.ov.idle .head i { background: #6b7487; }
+.grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1.25fr; gap: 6px; }
+.grid small { display: block; color: #8b95a8; font-size: 10.5px; }
+.grid b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.good { color: #5ef2b0; } .mid { color: #ffd166; } .bad { color: #ff6b7a; }

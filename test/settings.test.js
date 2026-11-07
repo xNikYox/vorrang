@@ -19,7 +19,7 @@ test("Standard beim ersten Start, kaputte Datei → Standard", () => {
 });
 
 test("Regeln werden bereinigt", () => {
-  const s = clean({ rules: [
+  const s = clean({ presets: 2, rules: [
     { id: "a", exe: "Firefox", level: "quatsch", priority: "RealTime", cores: [1, "x", 70], gpu: "mega", uploadMbit: "3.33" },
     { id: "a", exe: "doppelt.exe" },
     { exe: "" },
@@ -29,4 +29,24 @@ test("Regeln werden bereinigt", () => {
   assert.deepEqual(s.rules[0], { id: "a", name: "Firefox", exe: "firefox.exe", level: "normal", enabled: true, cores: [1], uploadMbit: 3.3 });
   assert.equal(s.rules[1].priority, null);
   assert.equal(s.rules[1].cores, "background");
+});
+
+test("Update von 1.0: Discord und Spotify werden ergänzt, eigene Regeln bleiben", () => {
+  const s = clean({ rules: [{ id: "mein-discord", exe: "Discord.exe", level: "minimal" }] }, 8);
+  assert.deepEqual(s.rules.map((r) => r.id), ["mein-discord", "spotify"]);
+  assert.equal(s.rules[0].level, "minimal");
+  assert.equal(s.presets, 2);
+  // danach nicht nochmal ergänzen, auch wenn der User Spotify löscht
+  assert.deepEqual(clean({ ...s, rules: s.rules.slice(0, 1) }, 8).rules.map((r) => r.id), ["mein-discord"]);
+  const fresh = clean(null, 8);
+  assert.equal(fresh.rules.find((r) => r.id === "discord").cores, null); // Discord: alle Kerne, nur niedrigere Priorität
+});
+
+test("neue Einstellungen werden geprüft", () => {
+  const s = clean({ overlayPos: "mitte", hotkeyToggle: "Control+Alt+V; rm", hotkeyOverlay: "", trimRam: 0 }, 8);
+  assert.equal(s.overlayPos, "top-right");
+  assert.equal(s.hotkeyToggle, "Control+Alt+V");
+  assert.equal(s.hotkeyOverlay, ""); // leer = kein Tastenkürzel
+  assert.equal(s.trimRam, false);
+  assert.equal(clean(null, 8).autoGames, true);
 });

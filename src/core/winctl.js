@@ -62,6 +62,88 @@ function qosScript(policies, resultFile) {
   return lines.join("\r\n");
 }
 
+/** Befehl: Arbeitsspeicher von Prozessen an Windows zurückgeben (EmptyWorkingSet) → { freed (Bytes), n } */
+function trimCmd(pids) {
+  const list = pids.map((p) => p | 0).filter((p) => p > 4).join(",");
+  return "if(-not ('Vorrang.Mem' -as [type])){Add-Type -Namespace Vorrang -Name Mem -MemberDefinition '[DllImport(\"psapi.dll\")] public static extern bool EmptyWorkingSet(IntPtr h);'}; " +
+    `$f=[int64]0; $n=0; foreach($i in @(${list || "0"})){ try{ $p=[Diagnostics.Process]::GetProcessById($i); $b=$p.WorkingSet64; if([Vorrang.Mem]::EmptyWorkingSet($p.Handle)){ $p.Refresh(); $f+=[Math]::Max(0,$b-$p.WorkingSet64); $n++ } }catch{} }; ` +
+    "ConvertTo-Json -InputObject ([pscustomobject]@{freed=$f;n=$n}) -Compress";
+}
+
+/** Befehl: bestehende TCP-Verbindungen der Prozesse → [{ a: Adresse, p: Port, o: pid }] */
+function connCmd(pids) {
+  const list = pids.map((p) => p | 0).filter((p) => p > 4).join(",");
+  return `$r=@(Get-NetTCPConnection -State Established -OwningProcess ${list || "0"} -ErrorAction SilentlyContinue | Where-Object { $_.RemoteAddress -ne '127.0.0.1' -and $_.RemoteAddress -ne '::1' } | ForEach-Object { [pscustomobject]@{a=$_.RemoteAddress;p=$_.RemotePort;o=$_.OwningProcess} }); ConvertTo-Json -InputObject $r -Compress -Depth 2`;
+}
+
+/** Befehl: ICMP-Ping (ohne Admin) → Millisekunden oder null */
+function pingCmd(host) {
+  return `$t=$null; try{ $r=(New-Object Net.NetworkInformation.Ping).Send(${psq(host)}, 1000); if($r.Status -eq 'Success'){ $t=$r.RoundtripTime } }catch{}; ConvertTo-Json -InputObject $t -Compress`;
+}
+
+/* ---- Windows-Dienste pausieren: Skript + zwei geplante Aufgaben mit Admin-Rechten (einmal einrichten) ---- */
+const SERVICES = ["wuauserv", "BITS", "DoSvc", "WSearch"]; // Update, Hintergrund-Downloads, Übermittlungsoptimierung, Suche
+const TASK_PATH = "\\Vorrang\\";
+const TASK_PAUSE = "Dienste pausieren";
+const TASK_RESUME = "Dienste fortsetzen";
+
+/** Das Skript, das die Aufgaben ausführen (liegt in ProgramData, nur Admins dürfen es ändern) */
+function servicesScript() {
+  return [
+    "param([string]$mode)",
+    "$state = Join-Path $PSScriptRoot 'pausiert.txt'",
+    `$names = @(${SERVICES.map(psq).join(",")})`,
+    "if ($mode -eq 'pause') {",
+    "  $run = @(Get-Service -Name $names -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name })",
+    "  if (Test-Path $state) { $run = @($run + @(Get-Content $state)) | Where-Object { $_ } | Select-Object -Unique }",
+    "  Set-Content -Path $state -Value $run",
+    "  foreach ($n in $run) { Stop-Service -Name $n -Force -NoWait -ErrorAction SilentlyContinue }",
+    "} elseif ($mode -eq 'resume') {",
+    "  if (Test-Path $state) {",
+    "    foreach ($n in @(Get-Content $state)) { if ($n) { Start-Service -Name $n -ErrorAction SilentlyContinue } }",
+    "    Remove-Item $state -Force",
+    "  }",
+    "}",
+  ].join("\r\n");
+}
+
+/** Einrichtungs-Skript (läuft mit Admin): Ordner + Skript + Rechte + Aufgaben für den angemeldeten Benutzer */
+function servicesSetupScript(user, resultFile, remove = false) {
+  const dir = "$env:ProgramData\\Vorrang";
+  const action = (mode) => `(New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script + '" ${mode}'))`;
+  const lines = [
+    "$ErrorActionPreference='Stop'",
+    "try {",
+    `  $dir = "${dir}"`,
+    "  $script = Join-Path $dir 'dienste.ps1'",
+    ...(remove
+      ? [
+          `  foreach ($t in @(${psq(TASK_PAUSE)}, ${psq(TASK_RESUME)})) { Unregister-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue }`,
+          "  if (Test-Path $script) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script resume }",
+          "  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue",
+        ]
+      : [
+          "  New-Item -ItemType Directory -Path $dir -Force | Out-Null",
+          // Nur Admins und SYSTEM dürfen schreiben – sonst könnte jedes Programm das Skript mit Admin-Rechten ausführen lassen
+          "  & icacls.exe $dir /setowner '*S-1-5-32-544' /T /C | Out-Null",
+          "  & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null",
+          "  $text = @'",
+          servicesScript(),
+          "'@",
+          "  Set-Content -LiteralPath $script -Value $text -Encoding UTF8",
+          `  $principal = New-ScheduledTaskPrincipal -UserId ${psq(user)} -LogonType Interactive -RunLevel Highest`,
+          "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances Queue",
+          `  Register-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName ${psq(TASK_PAUSE)} -Action ${action("pause")} -Principal $principal -Settings $settings -Force | Out-Null`,
+          `  Register-ScheduledTask -TaskPath ${psq(TASK_PATH)} -TaskName ${psq(TASK_RESUME)} -Action ${action("resume")} -Principal $principal -Settings $settings -Force | Out-Null`,
+        ]),
+    `  'ok' | Set-Content -LiteralPath ${psq(resultFile)} -Encoding UTF8`,
+    "} catch {",
+    `  ('Fehler: ' + $_.Exception.Message) | Set-Content -LiteralPath ${psq(resultFile)} -Encoding UTF8`,
+    "}",
+  ];
+  return lines.join("\r\n");
+}
+
 /** Dauerhafte PowerShell: Anfragen nacheinander, Antwort an einer Markierung erkennbar */
 class PowerShell {
   constructor({ exe = "powershell.exe", args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"], timeout = 20000 } = {}) {
@@ -171,6 +253,64 @@ class WinCtl {
     return ((await this.ps.run(infoCmd(paths))) || []).map((x) => ({ path: x.p, description: x.d || null }));
   }
 
+  /** RAM der Prozesse freiräumen → { freed, n } */
+  async trim(pids) {
+    if (!pids.length) return { freed: 0, n: 0 };
+    return (await this.ps.run(trimCmd(pids))) || { freed: 0, n: 0 };
+  }
+
+  /** Verbindungen der Prozesse (eigene PowerShell, damit die Hauptschleife nicht wartet) */
+  async connections(pids) {
+    if (!pids.length) return [];
+    return ((await this.net().run(connCmd(pids))) || []).map((c) => ({ address: c.a, port: c.p, pid: c.o }));
+  }
+
+  async ping(host) {
+    const ms = await this.net().run(pingCmd(host));
+    return typeof ms === "number" ? ms : null;
+  }
+
+  net() {
+    if (!this.netPs) this.netPs = new PowerShell({ timeout: 10000 });
+    return this.netPs;
+  }
+
+  /** Steam-Ordner aus der Registry (für die Spiele-Bibliotheken) */
+  async steamPath() {
+    const r = await this.ps.run("$v=$null; try { $v=(Get-ItemProperty -Path 'HKCU:\\Software\\Valve\\Steam' -ErrorAction Stop).SteamPath } catch {}; ConvertTo-Json -InputObject $v -Compress");
+    return typeof r === "string" && r ? r.replace(/\//g, "\\") : null;
+  }
+
+  /** Dienste-Aufgaben eingerichtet? */
+  async servicesReady() {
+    try {
+      await execText("schtasks.exe", ["/query", "/tn", TASK_PATH + TASK_PAUSE]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Dienste-Aufgaben einrichten oder entfernen (Windows fragt einmal nach Admin-Rechten) → "ok" | Fehlertext */
+  async setupServices(remove = false) {
+    const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + "\\" : "") + os.userInfo().username;
+    return this.elevated((result) => servicesSetupScript(user, result, remove), "dienste");
+  }
+
+  /** Dienste pausieren / fortsetzen über die eingerichtete Aufgabe (ohne Nachfrage) */
+  async services(pause) {
+    await execText("schtasks.exe", ["/run", "/tn", TASK_PATH + (pause ? TASK_PAUSE : TASK_RESUME)]);
+  }
+
+  /** OneDrive beenden (gibt den Pfad zurück, um es später wieder zu starten) */
+  async stopOneDrive(exePath) {
+    await execText(exePath, ["/shutdown"]).catch(() => {});
+  }
+
+  startOneDrive(exePath) {
+    spawn(exePath, ["/background"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  }
+
   /** Energiesparplan: aktuellen lesen (GUID) */
   async activePowerPlan() {
     const out = await execText("powercfg", ["/getactivescheme"]);
@@ -190,27 +330,34 @@ class WinCtl {
 
   /** Upload-Limits mit Admin-Rechten setzen (Windows fragt einmal nach) → "ok" oder Fehlertext */
   async applyQos(policies) {
+    return this.elevated((result) => qosScript(policies, result), "qos");
+  }
+
+  /** Skript mit Admin-Rechten ausführen (UAC-Abfrage); das Skript schreibt "ok" oder den Fehler in eine Datei */
+  async elevated(build, name) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vorrang-"));
-    const script = path.join(dir, "qos.ps1");
+    const script = path.join(dir, name + ".ps1");
     const result = path.join(dir, "ergebnis.txt");
-    fs.writeFileSync(script, "﻿" + qosScript(policies, result), "utf8");
+    fs.writeFileSync(script, "\ufeff" + build(result), "utf8");
+    const denied = "Abgebrochen – ohne Admin-Rechte geht das nicht.";
     try {
       await execText("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
         `Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${psq('"' + script + '"')}`]);
     } catch {
-      return "Abgebrochen – ohne Admin-Rechte lassen sich keine Upload-Limits setzen.";
+      return denied;
     } finally {
       setTimeout(() => fs.rmSync(dir, { recursive: true, force: true }), 2000);
     }
     try {
-      return fs.readFileSync(result, "utf8").replace(/^﻿/, "").trim() || "Keine Antwort";
+      return fs.readFileSync(result, "utf8").replace(/^\ufeff/, "").trim() || "Keine Antwort";
     } catch {
-      return "Abgebrochen – ohne Admin-Rechte lassen sich keine Upload-Limits setzen.";
+      return denied;
     }
   }
 
   stop() {
     this.ps.stop();
+    this.netPs?.stop();
   }
 }
 
@@ -220,4 +367,4 @@ function execText(file, args) {
   });
 }
 
-module.exports = { WinCtl, PowerShell, psq, toInt64, fromInt64, setCmd, gpuCmd, infoCmd, qosScript, LIST_CMD, GPU_KEY };
+module.exports = { WinCtl, PowerShell, psq, toInt64, fromInt64, setCmd, gpuCmd, infoCmd, qosScript, trimCmd, connCmd, pingCmd, servicesScript, servicesSetupScript, SERVICES, TASK_PATH, TASK_PAUSE, TASK_RESUME, LIST_CMD, GPU_KEY };

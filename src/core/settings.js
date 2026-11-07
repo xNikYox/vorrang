@@ -1,7 +1,7 @@
 // Einstellungen und Regeln: eine JSON-Datei im Benutzerordner der App. Ungültiges wird beim Laden repariert.
 const fs = require("node:fs");
 const path = require("node:path");
-const { LEVELS, PRIORITIES, defaultRules, exeName } = require("./rules");
+const { LEVELS, PRIORITIES, defaultRules, presetRules, exeName } = require("./rules");
 
 function defaults(cpuCount) {
   return {
@@ -18,10 +18,21 @@ function defaults(cpuCount) {
     interval: 3,
     showAll: false,
     qosApplied: [], // zuletzt mit Admin-Rechten gesetzte Upload-Limits
+    presets: 2, // Stand der Vorgaben (2 = Discord/Spotify ergänzt)
+    autoGames: true, // Spiele aus Steam/Epic/… automatisch erkennen
+    trimRam: true, // beim Spielstart RAM der Gedrosselten freiräumen
+    pauseServices: false, // Windows Update, Übermittlungsoptimierung, Suche pausieren (einmal Admin)
+    pauseOneDrive: false,
+    overlay: false,
+    overlayPos: "top-right",
+    overlayAlways: false, // auch ohne Spielmodus zeigen
+    hotkeyToggle: "Control+Alt+V",
+    hotkeyOverlay: "Control+Alt+O",
   };
 }
 
 const CORES = ["all", "background", "game"];
+const OVERLAY_POS = ["top-left", "top-right", "bottom-left", "bottom-right"];
 const GPUS = ["high", "saving", "auto"];
 
 function cleanRule(r, i) {
@@ -45,10 +56,18 @@ function cleanRule(r, i) {
 function clean(raw, cpuCount) {
   const d = defaults(cpuCount);
   const s = { ...d, ...(raw && typeof raw === "object" ? raw : {}) };
+  // Ältere Einstellungen: neue Vorgaben (Discord, Spotify) ergänzen, wenn es für das Programm noch keine Regel gibt
+  if (raw && typeof raw === "object" && Array.isArray(raw.rules) && (Number(raw.presets) || 1) < 2) {
+    const have = new Set(raw.rules.map((r) => exeName(r?.exe)));
+    s.rules = [...raw.rules, ...presetRules().filter((r) => !have.has(r.exe))];
+  }
+  s.presets = 2;
   const seen = new Set();
   s.rules = (Array.isArray(s.rules) ? s.rules : d.rules).map(cleanRule).filter((r) => r && !seen.has(r.id) && seen.add(r.id));
   if (!["auto", "on", "off"].includes(s.manual)) s.manual = "auto";
-  for (const k of ["autoGameMode", "alwaysThrottle", "powerPlan", "autostart", "startHidden", "closeToTray", "notify", "showAll"]) s[k] = !!s[k];
+  for (const k of ["autoGameMode", "alwaysThrottle", "powerPlan", "autostart", "startHidden", "closeToTray", "notify", "showAll", "autoGames", "trimRam", "pauseServices", "pauseOneDrive", "overlay", "overlayAlways"]) s[k] = !!s[k];
+  if (!OVERLAY_POS.includes(s.overlayPos)) s.overlayPos = d.overlayPos;
+  for (const k of ["hotkeyToggle", "hotkeyOverlay"]) s[k] = typeof s[k] === "string" && /^[\w+]{0,60}$/.test(s[k]) ? s[k] : d[k];
   s.backgroundCores = Math.max(1, Math.min(Math.max(1, cpuCount - 1), Number(s.backgroundCores) | 0 || d.backgroundCores));
   s.interval = Math.max(1, Math.min(30, Number(s.interval) || 3));
   if (!Array.isArray(s.qosApplied)) s.qosApplied = [];

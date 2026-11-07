@@ -60,3 +60,16 @@ process.stdin.on("data", (d) => {
   assert.deepEqual(await ps.run("'y'"), { n: 4, echo: false }); // nach Zeitüberschreitung neu gestartet
   ps.stop();
 });
+
+test("Neue Befehle: nur Zahlen als pid, Dienste-Skript ändert nur vier Dienste", () => {
+  assert.match(W.trimCmd([12, "3;rm -r", 1]), /@\(12\)/);
+  assert.match(W.connCmd([]), /-OwningProcess 0 /);
+  assert.match(W.pingCmd("x'; Remove-Item"), /Send\('x''; Remove-Item', 1000\)/);
+  assert.deepEqual(W.SERVICES, ["wuauserv", "BITS", "DoSvc", "WSearch"]);
+  const setup = W.servicesSetupScript("PC\\nik", "C:\\r.txt");
+  assert.match(setup, /-UserId 'PC\\nik' -LogonType Interactive -RunLevel Highest/);
+  assert.match(setup, /\/inheritance:r/); // nur Admins/SYSTEM dürfen schreiben
+  assert.match(setup, /dienste\.ps1/);
+  assert.match(W.servicesSetupScript("u", "C:\\r.txt", true), /Unregister-ScheduledTask/);
+  assert.match(W.servicesScript(), /Stop-Service -Name \$n -Force -NoWait/);
+});

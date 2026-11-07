@@ -33,6 +33,14 @@
         <button data-mode="on">Immer an</button>
         <button data-mode="off">Aus</button>
       </div>
+      <div class="stats" id="stats">
+        <div class="stat" data-k="cpu"><small>CPU gesamt</small><b>–</b><svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline/></svg></div>
+        <div class="stat" data-k="game"><small>Spiel</small><b>–</b><svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline/></svg></div>
+        <div class="stat" data-k="ram"><small>RAM</small><b>–</b><svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline/></svg></div>
+        <div class="stat" data-k="ping"><small>Ping</small><b>–</b><svg viewBox="0 0 100 28" preserveAspectRatio="none"><polyline/></svg></div>
+        <button class="btn measure-btn" id="measureBtn" title="Misst je 20 Sekunden ohne und mit Vorrang">Vorher/Nachher messen</button>
+      </div>
+      <div class="measure" id="measure" hidden></div>
       <div class="split">
         <div class="split-head">
           <span>CPU-Kerne <b id="cpuName"></b></span>
@@ -85,6 +93,21 @@
           <label class="row"><span>Prüfen alle</span><select data-set="interval"><option value="1">1 Sekunde</option><option value="2">2 Sekunden</option><option value="3">3 Sekunden</option><option value="5">5 Sekunden</option><option value="10">10 Sekunden</option></select></label>
         </div>
         <div class="card">
+          <h2>Spiel-Boost</h2>
+          <label class="row"><span>Spiele automatisch erkennen<small id="rootsText">Steam, Epic, Battle.net, Riot, Xbox, EA, Ubisoft, GOG</small></span><input type="checkbox" class="switch" data-set="autoGames"></label>
+          <label class="row"><span>RAM freiräumen beim Spielstart<small>Gedrosselte geben ungenutzten Arbeitsspeicher an Windows zurück</small></span><input type="checkbox" class="switch" data-set="trimRam"></label>
+          <label class="row"><span>Windows-Dienste pausieren<small>Windows Update, Übermittlungsoptimierung, Suche – einmal Admin-Rechte</small></span><input type="checkbox" class="switch" id="servicesSwitch"></label>
+          <label class="row"><span>OneDrive pausieren<small>Wird nach dem Spiel wieder gestartet</small></span><input type="checkbox" class="switch" data-set="pauseOneDrive"></label>
+        </div>
+        <div class="card">
+          <h2>Overlay &amp; Tastenkürzel</h2>
+          <label class="row"><span>Overlay im Spiel<small>CPU, RAM und Ping – sichtbar im Fenster- und randlosen Modus</small></span><input type="checkbox" class="switch" data-set="overlay"></label>
+          <label class="row"><span>Overlay auch ohne Spielmodus</span><input type="checkbox" class="switch" data-set="overlayAlways"></label>
+          <label class="row"><span>Position</span><select data-set="overlayPos" data-type="text"><option value="top-left">Oben links</option><option value="top-right">Oben rechts</option><option value="bottom-left">Unten links</option><option value="bottom-right">Unten rechts</option></select></label>
+          <label class="row"><span>Spielmodus an/aus</span><input class="hotkey" data-hotkey="hotkeyToggle" readonly></label>
+          <label class="row"><span>Overlay an/aus</span><input class="hotkey" data-hotkey="hotkeyOverlay" readonly></label>
+        </div>
+        <div class="card">
           <h2>Updates</h2>
           <div class="row"><span>Version <b id="version"></b><small id="updateText">Updates kommen automatisch.</small></span><button class="btn" id="updateBtn">Nach Updates suchen</button></div>
         </div>
@@ -94,6 +117,7 @@
           <p><b>Kerne:</b> Gedrosselte laufen nur auf den hinteren Kernen – der Rest bleibt frei fürs Spiel.</p>
           <p><b>Grafikkarte:</b> Spiele auf die starke GPU, Gedrosselte auf die Stromspar-GPU (bei Laptops mit zwei GPUs). Gilt ab dem nächsten Start des Programms.</p>
           <p><b>Upload-Limit:</b> Bremst, was ein Programm hochlädt, damit der Ping stabil bleibt. Downloads lassen sich unter Windows ohne Treiber nicht bremsen.</p>
+          <p><b>Messen:</b> Vergleicht je 20 Sekunden ohne und mit Vorrang, wie viel CPU das Spiel bekommt und wie stabil der Ping ist. FPS misst Vorrang nicht.</p>
           <p>Beim Beenden setzt Vorrang alles auf die ursprünglichen Werte zurück.</p>
         </div>
       </div>
