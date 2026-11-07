@@ -1,7 +1,7 @@
 {
   "name": "vorrang",
   "productName": "Vorrang",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Vorrang – Leistung auf Windows verteilen: Spiele bekommen Vorrang, Browser & Co. werden gedrosselt",
   "author": "xNikYox",
   "license": "UNLICENSED",
@@ -21,10 +21,19 @@
   "build": {
     "appId": "de.xnikyox.vorrang",
     "productName": "Vorrang",
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "build/tray-*.png", "build/icon.png", "package.json"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "build/tray-*.png",
+      "build/icon.png",
+      "package.json"
+    ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.png",
       "artifactName": "Vorrang-Setup-${version}.${ext}"
     },
@@ -37,6 +46,13 @@
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false
     },
-    "publish": [{ "provider": "github", "owner": "xNikYox", "repo": "vorrang", "releaseType": "release" }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "xNikYox",
+        "repo": "vorrang",
+        "releaseType": "release"
+      }
+    ]
   }
 }
