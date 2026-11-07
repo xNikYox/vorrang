@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>Vorrang</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5ef2b0"/><stop offset="1" stop-color="#2bb3ff"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="8" fill="url(#lg)"/><path d="M9 10l7 13 7-13" fill="none" stroke="#0b0f15" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Vorrang</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="programme" role="tab">Programme</button>
+      <button class="tab" data-tab="regeln" role="tab">Regeln</button>
+      <button class="tab" data-tab="einstellungen" role="tab">Einstellungen</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="hero">
+      <div class="hero-status">
+        <div class="pulse" aria-hidden="true"><span></span></div>
+        <div>
+          <div class="hero-title" id="statusTitle">Bereit</div>
+          <div class="hero-sub" id="statusSub">Wartet auf ein Spiel</div>
+        </div>
+      </div>
+      <div class="seg" id="modeSeg" role="radiogroup" aria-label="Spielmodus">
+        <button data-mode="auto">Automatisch</button>
+        <button data-mode="on">Immer an</button>
+        <button data-mode="off">Aus</button>
+      </div>
+      <div class="split">
+        <div class="split-head">
+          <span>CPU-Kerne <b id="cpuName"></b></span>
+          <span class="legend"><i class="lg-game"></i>Spiel <i class="lg-bg"></i>Gedrosselte</span>
+        </div>
+        <div class="cores" id="cores"></div>
+        <div class="split-ctl">
+          <label for="bgCores">Gedrosselte Programme bekommen</label>
+          <input type="range" id="bgCores" min="1" max="1" step="1">
+          <output id="bgCoresOut"></output>
+        </div>
+      </div>
+    </section>
+
+    <section class="page active" id="page-programme">
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Programm suchen …" autocomplete="off">
+        <label class="check"><input type="checkbox" id="showAll"> Hintergrund-Prozesse zeigen</label>
+      </div>
+      <div class="list" id="programs"></div>
+      <p class="empty" id="programsEmpty" hidden>Keine passenden Programme.</p>
+    </section>
+
+    <section class="page" id="page-regeln">
+      <div class="banner" id="qosBanner" hidden>
+        <div><b>Upload-Limits geändert.</b> Windows fragt einmal nach Admin-Rechten, um sie zu übernehmen.</div>
+        <button class="btn primary" id="qosApply">Übernehmen</button>
+      </div>
+      <div class="toolbar">
+        <button class="btn primary" id="addRule">+ Regel hinzufügen</button>
+        <span class="hint">Stufe wählen reicht – unter „Feinheiten“ lässt sich alles einzeln einstellen.</span>
+      </div>
+      <div class="rules" id="rules"></div>
+    </section>
+
+    <section class="page" id="page-einstellungen">
+      <div class="settings">
+        <div class="card">
+          <h2>Start</h2>
+          <label class="row"><span>Mit Windows starten</span><input type="checkbox" class="switch" data-set="autostart"></label>
+          <label class="row"><span>Beim Autostart nur im Tray (ohne Fenster)</span><input type="checkbox" class="switch" data-set="startHidden"></label>
+          <label class="row"><span>Schließen-Knopf versteckt in den Tray</span><input type="checkbox" class="switch" data-set="closeToTray"></label>
+        </div>
+        <div class="card">
+          <h2>Spielmodus</h2>
+          <label class="row"><span>Automatisch an, sobald ein Spiel läuft<small>Spiele = Regeln mit der Stufe „Vorrang“</small></span><input type="checkbox" class="switch" data-set="autoGameMode"></label>
+          <label class="row"><span>Gedrosselte auch ohne Spiel drosseln</span><input type="checkbox" class="switch" data-set="alwaysThrottle"></label>
+          <label class="row"><span>Energiesparplan „Höchstleistung“ im Spielmodus<small>Danach zurück auf den vorherigen Plan</small></span><input type="checkbox" class="switch" data-set="powerPlan"></label>
+          <label class="row"><span>Hinweis beim An- und Ausschalten</span><input type="checkbox" class="switch" data-set="notify"></label>
+          <label class="row"><span>Prüfen alle</span><select data-set="interval"><option value="1">1 Sekunde</option><option value="2">2 Sekunden</option><option value="3">3 Sekunden</option><option value="5">5 Sekunden</option><option value="10">10 Sekunden</option></select></label>
+        </div>
+        <div class="card">
+          <h2>Updates</h2>
+          <div class="row"><span>Version <b id="version"></b><small id="updateText">Updates kommen automatisch.</small></span><button class="btn" id="updateBtn">Nach Updates suchen</button></div>
+        </div>
+        <div class="card explain">
+          <h2>So teilt Vorrang auf</h2>
+          <p><b>Priorität:</b> Wird die CPU knapp, bekommt das Spiel zuerst Rechenzeit, Gedrosselte zuletzt.</p>
+          <p><b>Kerne:</b> Gedrosselte laufen nur auf den hinteren Kernen – der Rest bleibt frei fürs Spiel.</p>
+          <p><b>Grafikkarte:</b> Spiele auf die starke GPU, Gedrosselte auf die Stromspar-GPU (bei Laptops mit zwei GPUs). Gilt ab dem nächsten Start des Programms.</p>
+          <p><b>Upload-Limit:</b> Bremst, was ein Programm hochlädt, damit der Ping stabil bleibt. Downloads lassen sich unter Windows ohne Treiber nicht bremsen.</p>
+          <p>Beim Beenden setzt Vorrang alles auf die ursprünglichen Werte zurück.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <template id="tplProgram">
+    <div class="prog">
+      <div class="ico"></div>
+      <div class="pname"><b></b><small></small></div>
+      <div class="meter"><div class="bar"><i></i></div><span class="cpu"></span></div>
+      <div class="ram"></div>
+      <div class="seg levels"></div>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

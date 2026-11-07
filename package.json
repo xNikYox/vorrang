@@ -1,0 +1,42 @@
+{
+  "name": "vorrang",
+  "productName": "Vorrang",
+  "version": "1.0.0",
+  "description": "Vorrang – Leistung auf Windows verteilen: Spiele bekommen Vorrang, Browser & Co. werden gedrosselt",
+  "author": "xNikYox",
+  "license": "UNLICENSED",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:win": "electron-builder --win nsis --x64 --publish never --config.win.signAndEditExecutable=false"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "de.xnikyox.vorrang",
+    "productName": "Vorrang",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "build/tray-*.png", "build/icon.png", "package.json"],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.png",
+      "artifactName": "Vorrang-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vorrang",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [{ "provider": "github", "owner": "xNikYox", "repo": "vorrang", "releaseType": "release" }]
+  }
+}

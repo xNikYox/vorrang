@@ -1,0 +1,32 @@
+# Praxistest auf echtem Windows und – bei einem Tag vX.Y.Z – Installer bauen und als Release veröffentlichen.
+# Installierte Apps holen sich das Update automatisch (latest.yml im Release).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tests
+        run: npm test
+      - name: Windows-Praxistest
+        run: node test/windows-smoke.js
+      - name: Installer bauen und veröffentlichen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npx electron-builder --win nsis --x64 --publish always
