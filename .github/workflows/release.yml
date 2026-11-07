@@ -24,9 +24,18 @@ jobs:
         run: npm test
       - name: Windows-Praxistest
         run: node test/windows-smoke.js
-      - name: Installer bauen und veröffentlichen
+      - name: Installer bauen
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Veröffentlichen
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: npx electron-builder --win nsis --x64 --publish always
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          # latest.yml + Blockmap braucht das Auto-Update; Vorrang-Setup.exe = fester Download-Link
+          test -f dist/latest.yml && test -f "dist/Vorrang-Setup-$V.exe" && test -f "dist/Vorrang-Setup-$V.exe.blockmap"
+          cp "dist/Vorrang-Setup-$V.exe" dist/Vorrang-Setup.exe
+          gh release create "$GITHUB_REF_NAME" --title "Vorrang $V" --notes "Installer: Vorrang-Setup.exe herunterladen und starten. Installierte Versionen aktualisieren sich automatisch." \
+            "dist/Vorrang-Setup-$V.exe" "dist/Vorrang-Setup-$V.exe.blockmap" dist/latest.yml dist/Vorrang-Setup.exe
