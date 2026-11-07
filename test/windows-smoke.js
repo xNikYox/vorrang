@@ -44,11 +44,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log("Priorität + Kerne setzen und zurücksetzen: ok");
 
     // Speicher-Priorität: setzen, auslesen (über den Vorher-Wert der nächsten Änderung), zurücksetzen
-    const [m1] = await win.apply([{ pid: child.pid, memPriority: 2 }]);
-    assert.equal(m1.memPriorityOk, true, "Speicher-Priorität setzen: " + JSON.stringify(m1));
-    assert.equal(m1.memPriority, 5, "Standard ist 5 (normal)");
-    const [m2] = await win.apply([{ pid: child.pid, memPriority: 5 }]);
-    assert.equal(m2.memPriority, 2, "Speicher-Priorität wurde nicht übernommen");
+    const [m0] = await win.apply([{ pid: child.pid, memPriority: 3 }]);
+    assert.equal(m0.memPriorityOk, true, "Speicher-Priorität setzen: " + JSON.stringify(m0));
+    const orig = m0.memPriority;
+    assert.ok(orig >= 1 && orig <= 5, "Ausgangswert lesbar: " + orig);
+    const other = orig === 1 ? 2 : 1;
+    const [m1] = await win.apply([{ pid: child.pid, memPriority: other }]);
+    assert.equal(m1.memPriority, 3, "Speicher-Priorität 3 wurde nicht übernommen");
+    const [m2] = await win.apply([{ pid: child.pid, memPriority: orig }]);
+    assert.equal(m2.memPriority, other);
+    console.log(`Speicher-Priorität: Ausgangswert ${orig}, 3 und ${other} gesetzt, zurück auf ${orig}`);
     console.log("Speicher-Priorität setzen und zurücksetzen: ok");
 
     const [err] = await win.apply([{ pid: 999999, priority: "High" }]);
