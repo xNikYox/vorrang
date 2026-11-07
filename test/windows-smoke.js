@@ -11,7 +11,12 @@ const { WinCtl } = require("../src/core/winctl");
   try {
     const t0 = Date.now();
     const list = await win.list();
-    console.log(`Prozessliste: ${list.length} Prozesse in ${Date.now() - t0} ms`);
+    console.log(`Prozessliste: ${list.length} Prozesse in ${Date.now() - t0} ms (erster Aufruf, PowerShell startet)`);
+    const t1 = Date.now();
+    await win.list();
+    const warm = Date.now() - t1;
+    console.log(`Prozessliste erneut: ${warm} ms`);
+    assert.ok(warm < 3000, "Prozessliste zu langsam für die Schleife");
     const me = list.find((p) => p.pid === child.pid);
     assert.ok(me, "Testprozess fehlt in der Liste");
     assert.equal(me.name.toLowerCase(), "ping");
@@ -19,16 +24,18 @@ const { WinCtl } = require("../src/core/winctl");
 
     const n = Math.min(64, os.cpus().length);
     const last = (1n << BigInt(n - 1)).toString();
-    const [before] = await win.apply([{ pid: child.pid, priority: "BelowNormal", affinity: last }]);
-    assert.equal(before.priority, "Normal");
     const read = () => JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-Command",
       `$p=Get-Process -Id ${child.pid}; ConvertTo-Json @{prio=$p.PriorityClass.ToString(); aff=([int64]$p.ProcessorAffinity).ToString()} -Compress`]).toString());
+    const start = read();
+    const target = start.prio === "Idle" ? "BelowNormal" : "Idle";
+    const [before] = await win.apply([{ pid: child.pid, priority: target, affinity: last }]);
+    assert.equal(before.priority, start.prio);
     let now = read();
-    assert.equal(now.prio, "BelowNormal");
+    assert.equal(now.prio, target);
     assert.equal(now.aff, last);
     await win.apply([{ pid: child.pid, restore: true, priority: before.priority, affinity: before.affinity }]);
     now = read();
-    assert.equal(now.prio, "Normal");
+    assert.equal(now.prio, start.prio);
     assert.equal(BigInt.asUintN(64, BigInt(now.aff)).toString(), before.affinity);
     console.log("Priorität + Kerne setzen und zurücksetzen: ok");
 
