@@ -85,6 +85,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log("Rechte:", acl.replace(/\s+/g, " ").trim());
     assert.doesNotMatch(acl, /(BUILTIN\\Users|VORDEFINIERT\\Benutzer):\(OI\)\(CI\)\((F|M|W)/, "Benutzer dürfen das Skript nicht ändern");
     const svc = () => JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-Command", "ConvertTo-Json @(Get-Service wuauserv,BITS,DoSvc,WSearch -ErrorAction SilentlyContinue | ForEach-Object { @{n=$_.Name;s=$_.Status.ToString()} }) -Compress"]).toString() || "[]");
+    // BITS sicher laufen lassen, damit auch ein Dienst mit Auslöser-Start geprüft wird
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", "Start-Service BITS,wuauserv -ErrorAction SilentlyContinue"]);
     console.log("Dienste vorher:", JSON.stringify(svc()));
     const tp = Date.now();
     execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "pause"]);
