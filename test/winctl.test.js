@@ -22,7 +22,9 @@ test("Befehle maskieren Anführungszeichen und bleiben einzeilig", () => {
   const gpu = W.gpuCmd("C:\\Spiele\\it's.exe", "high");
   assert.match(gpu, /'C:\\Spiele\\it''s\.exe'/);
   assert.match(gpu, /GpuPreference=2;/);
-  assert.doesNotMatch(gpu, /-Force/); // vorhandene Einträge nie überschreiben
+  // -Force nur, wenn der Schlüssel fehlt – sonst würden vorhandene Einträge gelöscht
+  assert.match(gpu, /if\(!\(Test-Path '[^']+'\)\)\{New-Item -Path '[^']+' -Force \| Out-Null\}; Set-ItemProperty/);
+  assert.equal(gpu.match(/-Force/g).length, 1);
   assert.match(W.gpuCmd("C:\\a.exe", null), /Remove-ItemProperty/);
 });
 

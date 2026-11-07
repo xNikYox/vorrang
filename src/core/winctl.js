@@ -33,9 +33,12 @@ const GPU_VALUE = { auto: "GpuPreference=0;", saving: "GpuPreference=1;", high: 
 
 /** Befehl: Grafikkarten-Wahl für eine exe setzen (null/"none" = Eintrag entfernen) */
 function gpuCmd(exePath, pref) {
-  if (!GPU_VALUE[pref]) return `Remove-ItemProperty -Path ${psq(GPU_KEY)} -Name ${psq(exePath)} -ErrorAction SilentlyContinue; '"ok"'`;
-  // Kein New-Item -Force auf vorhandene Schlüssel: das würde andere Einträge löschen
-  return `if(!(Test-Path ${psq(GPU_KEY)})){New-Item -Path ${psq(GPU_KEY)} | Out-Null}; Set-ItemProperty -Path ${psq(GPU_KEY)} -Name ${psq(exePath)} -Value ${psq(GPU_VALUE[pref])}; '"ok"'`;
+  const body = !GPU_VALUE[pref]
+    ? `if(Test-Path ${psq(GPU_KEY)}){Remove-ItemProperty -LiteralPath ${psq(GPU_KEY)} -Name ${psq(exePath)} -ErrorAction SilentlyContinue}`
+    : // Schlüssel nur anlegen, wenn er fehlt (-Force legt auch DirectX darüber an); vorhandene Schlüssel nie neu anlegen –
+      // New-Item -Force würde sonst alle anderen Einträge löschen
+      `if(!(Test-Path ${psq(GPU_KEY)})){New-Item -Path ${psq(GPU_KEY)} -Force | Out-Null}; Set-ItemProperty -LiteralPath ${psq(GPU_KEY)} -Name ${psq(exePath)} -Value ${psq(GPU_VALUE[pref])} -ErrorAction Stop`;
+  return `try{ ${body}; '"ok"' }catch{ ConvertTo-Json -InputObject ('Fehler: ' + $_.Exception.Message) -Compress }`;
 }
 
 /** Befehl: Datei-Beschreibungen (z. B. „Firefox“) für mehrere exe-Pfade */
@@ -159,7 +162,8 @@ class WinCtl {
   }
 
   async gpu(exePath, pref) {
-    await this.ps.run(gpuCmd(exePath, pref));
+    const r = await this.ps.run(gpuCmd(exePath, pref));
+    if (r !== "ok") throw new Error(r || "Grafikkarten-Wahl fehlgeschlagen");
   }
 
   async describe(paths) {
